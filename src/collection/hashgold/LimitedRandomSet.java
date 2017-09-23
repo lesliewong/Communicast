@@ -111,7 +111,7 @@ public class LimitedRandomSet<T> {
 	}
 
 	/**
-	 * pick n randomized elements from the set
+	 * pick some randomized elements from the set
 	 * 
 	 * @param n
 	 * @return
