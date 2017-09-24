@@ -30,8 +30,7 @@ public class NodeDetection implements Message {
 	@Override
 	public void onReceive(Responser respon) {
 		if (! respon.isClient()) {//服务端发出探测响应
-			respon.send(this);
-			respon.close();
+			respon.reply(this);
 		}	
 	}
 

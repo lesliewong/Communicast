@@ -2,6 +2,7 @@ package msg.hashgold;
 
 import java.util.HashMap;
 
+import exception.hashgold.DuplicateMessageNumber;
 import exception.hashgold.UnrecognizedMessage;
 
 public class Registry {
@@ -14,9 +15,12 @@ public class Registry {
 	/**
 	 * 注册一个消息
 	 * @param message
+	 * @throws DuplicateMessageNumber 
 	 */
-	public static void registerMessage(Message message) {
-		message_map.put(message.getType(), message.getClass());
+	public static void registerMessage(Message message) throws DuplicateMessageNumber {
+		if (message_map.putIfAbsent(message.getType(), message.getClass()) != null) {
+			throw new DuplicateMessageNumber(message.getType());
+		}
 	}
 	
 	

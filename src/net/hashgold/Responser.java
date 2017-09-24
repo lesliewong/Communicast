@@ -18,22 +18,63 @@ public final class Responser {
 		_sock = sock;
 	}
 	
-	public boolean send(Message message) {
+	/**
+	 * 回复消息
+	 * @param message
+	 * @return
+	 */
+	public boolean reply(Message message) {
 		return _node.sendTo(_sock, message);
 	}
 	
+	/**
+	 * 转发消息
+	 * @param message
+	 * @return
+	 */
+	public int forward(Message message) {
+		return _node.forward(message, _sock);
+	}
+	
+	
+	/**
+	 * 获取远程地址
+	 * @return
+	 */
 	public InetAddress getAddress() {
 		return _sock.getInetAddress();
 	}
 	
+	
+	/**
+	 * 获取远程端口
+	 * @return
+	 */
 	public int getPort() {
 		return _sock.getPort();
 	}
 	
+	
+	/**
+	 * 获取本地节点
+	 * @return
+	 */
+	public Node getLocalNode() {
+		return _node;
+	}
+	
+	/**
+	 * 判断自身是否客户端
+	 * @return
+	 */
 	public boolean isClient() {
 		return _sock.isClient;
 	}
 	
+	
+	/**
+	 * 关闭连接
+	 */
 	public void close() {
 		_node.delConnected(_sock);
 	}

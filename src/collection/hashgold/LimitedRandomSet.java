@@ -14,28 +14,13 @@ import java.util.Random;
 import java.util.Set;
 import java.util.function.Predicate;
 
-public class LimitedRandomSet<T> {
-	private int len;// 最大列表长度，0不限制
+public class LimitedRandomSet<T> implements Set<T>{
 	private final HashSet<T> holdSet;	// 初始化集合BEGIN
+	private int len;// 最大列表长度，0不限制
 	public LimitedRandomSet() throws Exception {
 		this(0);
 	}
 
-	/**
-	 * 指定列表最大容量
-	 * 
-	 * @param max_length
-	 *            最大节点数量
-	 * @throws Exception
-	 */
-	public LimitedRandomSet(int max_length) throws Exception {
-		if (max_length < 0) {
-			throw new Exception("Random set length error");
-		}
-		len = max_length;
-		holdSet = new HashSet<T>();
-	}
-	
 	/**
 	 * 用给定集合初始化
 	 * @param collection
@@ -43,7 +28,6 @@ public class LimitedRandomSet<T> {
 	public LimitedRandomSet(Collection<T> collection) {
 		holdSet = new HashSet<T>(collection);
 	}
-
 	
 	/**
 	 * 用给定集合初始化并限制长度
@@ -59,15 +43,46 @@ public class LimitedRandomSet<T> {
 		len = max_length;
 	}
 
+	
+	/**
+	 * 指定列表最大容量
+	 * 
+	 * @param max_length
+	 *            最大节点数量
+	 * @throws Exception
+	 */
+	public LimitedRandomSet(int max_length) throws Exception {
+		if (max_length < 0) {
+			throw new Exception("Random set length error");
+		}
+		len = max_length;
+		holdSet = new HashSet<T>();
+	}
+
+
 
 	/**
-	 * 添加一个集合
+	 * Add an element to the set
 	 * 
-	 * @param elements
-	 * @return HashSet<T> 新添加元素的集合
+	 * @param element
+	 * @return
 	 */
-	public Set<T> add(Set<T> elements) {
-		return add(elements, null);
+	synchronized public boolean add(T element) {
+		Set<T> set = new HashSet<T>();
+		set.add(element);
+		if (holdSet.size() < len) {
+			return !addAll(set, null).isEmpty();
+		} else {
+			return false;
+		}
+	}
+	 
+	
+	 
+
+	@Override
+	public boolean addAll(Collection<? extends T> c) {
+		return ! addAll((Collection<T>)c, null).isEmpty();
 	}
 
 	/**
@@ -76,7 +91,7 @@ public class LimitedRandomSet<T> {
 	 * @param elements
 	 * @return HashSet<T> 新添加元素的集合
 	 */
-	 synchronized public Set<T> add(Collection<T> elements, Predicate<T> filter) {
+	 synchronized public Set<T> addAll(Collection<T> elements, Predicate<T> filter) {
 		Set<T> newElements = new HashSet<T>();
 
 		// find out new elements
@@ -110,6 +125,36 @@ public class LimitedRandomSet<T> {
 		return newElements;
 	}
 
+	@Override
+	public void clear() {
+		holdSet.clear();
+		
+	}
+
+	@Override
+	public boolean contains(Object element) {
+		return holdSet.contains(element);
+	}
+
+	
+	@Override
+	public boolean containsAll(Collection<?> c) {
+		return holdSet.containsAll(c);
+	}
+
+	@Override
+	public boolean isEmpty() {
+		return holdSet.isEmpty();
+	}
+	
+
+	@Override
+	public Iterator<T> iterator() {
+		return holdSet.iterator();
+	}
+
+
+
 	/**
 	 * pick some randomized elements from the set
 	 * 
@@ -121,13 +166,19 @@ public class LimitedRandomSet<T> {
 		if (n <= 0) {
 			throw new Exception("Pick amount must be positive");
 		}
+		
+		if (n >= holdSet.size()) {
+			return holdSet;
+		}
 
 		Set<T> pickedElements = new HashSet<T>();
 		Set<Integer> indexesToPick = new HashSet<Integer>();
 		Random rand = new Random();
 		
 		List<T> holdList = new ArrayList<T>(holdSet);
-
+		
+		
+		
 		do {
 			indexesToPick.add(rand.nextInt(holdList.size()));
 		} while (indexesToPick.size() < n);
@@ -141,6 +192,9 @@ public class LimitedRandomSet<T> {
 
 		return pickedElements;
 	}
+	
+
+	
 
 	/**
 	 * Remove an element from the set
@@ -148,37 +202,24 @@ public class LimitedRandomSet<T> {
 	 * @param element
 	 * @return
 	 */
-	 synchronized public boolean remove(T element) {
+	 synchronized public boolean remove(Object element) {
 		return holdSet.remove(element);
 	}
 
-	/**
-	 * Delete elements
-	 * 
-	 * @param elements
-	 * @return
-	 */
-	synchronized public boolean remove(HashSet<T> elements) {
-		return holdSet.removeAll(elements);
-	}
-
-	/**
-	 * Add an element to the set
-	 * 
-	 * @param element
-	 * @return
-	 */
-	synchronized public boolean add(T element) {
-		Set<T> set = new HashSet<T>();
-		set.add(element);
-		if (holdSet.size() < len) {
-			return !add(set).isEmpty();
-		} else {
-			return false;
-		}
-	}
-
 	
+
+	@Override
+	synchronized public boolean removeAll(Collection<?> c) {
+		return holdSet.removeAll(c);
+	}
+
+
+
+	@Override
+	public boolean retainAll(Collection<?> c) {
+		return holdSet.retainAll(c);
+	}
+
 	/**
 	 * get size
 	 * 
@@ -187,8 +228,19 @@ public class LimitedRandomSet<T> {
 	public int size() {
 		return holdSet.size();
 	}
+	
 
-	public boolean contains(T element) {
-		return holdSet.contains(element);
+	@Override
+	public Object[] toArray() {
+		return holdSet.toArray();
 	}
+
+	@Override
+	public <T> T[] toArray(T[] a) {
+		return null;
+	}
+
+	
+
+	
 }

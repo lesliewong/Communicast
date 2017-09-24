@@ -9,11 +9,21 @@ public class Test {
 
 	public static void main(String[] args) throws IOException, ConnectionFull  {
 		Node server = new Node();
+		server.max_connections = 1;
+		//server.debug = true;
 		server.listen();
-		server.debug = true;
-		Node client = new Node();
-		System.out.println(client.detect(server.getServerAddress(), server.getServerPort()) ? "服务器存活":"服务器无响应");
 		
+		Node client1 = new Node();
+		Node client2 = new Node();
+		client2.debug = true;
+		client1.connect(server.getServerAddress(), server.getServerPort());
+		try {
+			Thread.currentThread().sleep(1000);
+		} catch (InterruptedException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		client2.connect(server.getServerAddress(), server.getServerPort());
 		server.waitForServer();
 	}
 

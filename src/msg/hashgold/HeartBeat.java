@@ -31,7 +31,7 @@ public class HeartBeat implements Message {
 	public void onReceive(Responser respon) {
 		//收到心跳服务器返回一个心跳应答
 		if (!respon.isClient()) {
-			respon.send(this);
+			respon.reply(this);
 		}
 	}
 
