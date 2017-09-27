@@ -223,7 +223,7 @@ public class Node {
 
 	}
 
-	public static final byte[] HANDSHAKE_FLAG;// 协议握手标识
+	public static byte[] HANDSHAKE_FLAG;// 协议握手标识
 
 	public static final int heart_beat_interval = 15;// 心跳间隔秒,超过一个心跳间隔未收到对方消息则主动发出一个心跳,超过3个心跳间隔时间无响应将断开连接
 
@@ -644,17 +644,24 @@ public class Node {
 	 * 
 	 * @param sock
 	 * @param message
+	 * @param isForward 是否转发
 	 * @return 失败false
 	 * @throws MessageTooLong
 	 */
-	boolean sendTo(NodeSocket sock, Message message) {
+	boolean sendTo(NodeSocket sock, Message message, boolean isForward) {
 		logInfo( message.getClass() + "--->>>", sock);
 		try {
 			
 			ByteArrayOutputStream out = new ByteArrayOutputStream();
 
 			message.output(new DataOutputStream(out));
-
+			int msg_type = message.getType();
+			
+			if (isForward) {
+				// TODO 转发通过过滤器
+				
+				return true;
+			}
 			DataOutputStream rawOut = new DataOutputStream(sock.getOutputStream());
 
 			int msg_len = out.size();
@@ -663,7 +670,7 @@ public class Node {
 				return false;
 			}
 
-			rawOut.write(message.getType());// 消息类型
+			rawOut.write(msg_type);// 消息类型
 			//logInfo("消息长度" + msg_len);
 			rawOut.writeShort(msg_len);
 			out.writeTo(rawOut);// 消息体
@@ -676,6 +683,10 @@ public class Node {
 			return false;
 		}
 		return true;
+	}
+	
+	boolean sendTo(NodeSocket sock, Message message) {
+		return sendTo(sock, message, false);
 	}
 
 	/**
