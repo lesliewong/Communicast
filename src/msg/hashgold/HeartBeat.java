@@ -1,8 +1,8 @@
 package msg.hashgold;
 
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
 
 import net.hashgold.Responser;
 
@@ -13,18 +13,18 @@ import net.hashgold.Responser;
  */
 
 public class HeartBeat implements Message {
-	
+
 	@Override
 	public int getType() {
 		return 0;
 	}
 
 	@Override
-	public void output(OutputStream out) throws IOException {
+	public void output(DataOutputStream out) throws IOException {
 	}
 
 	@Override
-	public void input(InputStream in, int len) {
+	public void input(DataInputStream in, int len) {
 	}
 
 	@Override

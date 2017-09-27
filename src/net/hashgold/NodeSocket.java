@@ -19,7 +19,7 @@ public class NodeSocket implements AutoCloseable{
 		_local_hash_code = _sock.getLocalAddress().hashCode() ^ _sock.getLocalPort();
 		isClient = client;
 		_sock.setTcpNoDelay(true);
-		_sock.setSoTimeout(2000);//新连接响应超时时间,默认2秒
+		_sock.setSoTimeout(Node.connect_timeout);//新连接响应超时时间,默认2秒
 	}
 	
 	NodeSocket(Socket sock) throws SocketException {

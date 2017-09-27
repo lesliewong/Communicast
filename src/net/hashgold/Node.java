@@ -1,9 +1,9 @@
 package net.hashgold;
 
 import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.NetworkInterface;
@@ -55,7 +55,7 @@ public class Node {
 
 		@Override
 		public void run() {
-			logInfo("收到消息" + _msg.getClass(), _sock);
+			logInfo(  "<<<--" +  _msg.getClass(), _sock);
 			_msg.onReceive(new Responser(Node.this, _sock));
 			
 			//收到消息后发现连接未加入或被移除则关闭socket
@@ -104,10 +104,9 @@ public class Node {
 			super(message_loop_group, new Runnable() {
 				public void run() {
 					try {
-						logInfo("接收新连接", _sock);
+						//logInfo("接收新连接", _sock);
 
-						InputStream in = _sock.getInputStream();
-
+						DataInputStream in = new DataInputStream(_sock.getInputStream());
 						// 发送协议头
 						_sock.getOutputStream().write(HANDSHAKE_FLAG);
 
@@ -122,9 +121,13 @@ public class Node {
 						}
 						buffer = null;
 
-						// 客户端发起心跳激活会话
+						// 客户端发起节点交换请求
 						if (_sock.isClient) {
-							sendTo(_sock, new HeartBeat());
+							try {
+								sendTo(_sock, new NodesExchange(Node.this, 0));
+							} catch (Exception e) {
+								e.printStackTrace();
+							}
 						}
 
 						// >>>循环读取消息
@@ -139,15 +142,15 @@ public class Node {
 						boolean node_added = false;
 
 						do {
-							msg_type = in.read() & 0xff;
-							msg_len = ((in.read() << 8 )& 0xffff) + (in.read() & 0xff);
+							msg_type = in.readUnsignedByte();
+							msg_len = in.readUnsignedShort();
 							try {
 								Message msg;
 
 								msg = Registry.newMessageInstance(msg_type);
 
 								msg.input(in, msg_len);
-								logInfo("消息长度" + msg_len, _sock);
+								//logInfo("消息长度" + msg_len, _sock);
 
 								//收到第一个消息
 								if (!node_added) {
@@ -197,6 +200,7 @@ public class Node {
 								break;
 							} catch (UnrecognizedMessage e) {
 								// 无法识别的消息,断开连接
+								logInfo("无法识别消息", _sock);
 								break;
 							}
 
@@ -205,6 +209,9 @@ public class Node {
 
 					} catch (IOException e) {
 						// 消息读取出错
+						if (debug) {
+							e.printStackTrace();
+						}
 					}
 					logInfo("节点被移除", _sock);
 					delConnected(_sock);
@@ -221,6 +228,8 @@ public class Node {
 	public static final int heart_beat_interval = 15;// 心跳间隔秒,超过一个心跳间隔未收到对方消息则主动发出一个心跳,超过3个心跳间隔时间无响应将断开连接
 
 	public static int public_nodes_list_size = 500; // 保存公共节点数量限制
+	
+	public static int connect_timeout = 500;//连接超时,毫秒
 
 	public int max_connections = 50;// 最大连接数量;
 
@@ -317,6 +326,9 @@ public class Node {
 	 * @return
 	 */
 	public Set<InetSocketAddress> getPublicNodes(int n) {
+		if (n == 0) {
+			return null;
+		}
 		try {
 			return public_nodes_list.pick(n);
 		} catch (Exception e) {
@@ -330,7 +342,7 @@ public class Node {
 	 * 获取全部公共节点
 	 * @return
 	 */
-	public Set<InetSocketAddress> getPublicNodes() {
+	public LimitedRandomSet<InetSocketAddress> getPublicNodesList() {
 		return public_nodes_list;
 	}
 
@@ -361,19 +373,21 @@ public class Node {
 
 	/**
 	 * 添加公共节点
-	 * 
+	 * 会对新节点自动探测过滤无效节点
 	 * @param addresses
 	 */
 	public void addPublicNodes(Set<InetSocketAddress> addresses) {
+		logInfo("检测节点列表..");
 		public_nodes_list.addAll(addresses, new Predicate<InetSocketAddress>() {
 			@Override
 			public boolean test(InetSocketAddress socketAddr) {
 				// 对节点列表进行探测
 				InetAddress addr = socketAddr.getAddress();
-				return !isOwnedAddress(addr) && isInternetAddress(addr)
-						&& detect(addr, socketAddr.getPort());
+				return isOwnedAddress(addr) || !isInternetAddress(addr)
+						|| !detect(addr, socketAddr.getPort());
 			}
 		});
+		logInfo("检测完成,列表长度" + public_nodes_list.size());
 	}
 
 	/**
@@ -461,9 +475,10 @@ public class Node {
 			heart_beater = Executors.newSingleThreadScheduledExecutor();
 			heart_beater.scheduleAtFixedRate(new HeartBeatEvent(), 0, 1, TimeUnit.SECONDS);
 		}
+		Socket _sock = new Socket();
+		_sock.connect(new InetSocketAddress(dest, port), connect_timeout);
+		NodeSocket sock = new NodeSocket(_sock, true);
 		
-		NodeSocket sock = new NodeSocket(new Socket(dest, port), true);
-
 		new MessageLoopThread(sock).start();// 开启消息循环
 		logInfo("主动连接", sock);
 
@@ -633,14 +648,14 @@ public class Node {
 	 * @throws MessageTooLong
 	 */
 	boolean sendTo(NodeSocket sock, Message message) {
-		logInfo("发送消息" + message.getClass(), sock);
+		logInfo( message.getClass() + "--->>>", sock);
 		try {
+			
 			ByteArrayOutputStream out = new ByteArrayOutputStream();
 
-			message.output(out);
+			message.output(new DataOutputStream(out));
 
-			OutputStream rawOut = sock.getOutputStream();
-			rawOut.write(message.getType());
+			DataOutputStream rawOut = new DataOutputStream(sock.getOutputStream());
 
 			int msg_len = out.size();
 			if (msg_len > 65535) {
@@ -649,13 +664,15 @@ public class Node {
 			}
 
 			rawOut.write(message.getType());// 消息类型
-			logInfo("消息长度" + msg_len);
-			rawOut.write(msg_len >> 8);// 消息长度
-			rawOut.write(msg_len);
+			//logInfo("消息长度" + msg_len);
+			rawOut.writeShort(msg_len);
 			out.writeTo(rawOut);// 消息体
 			rawOut.flush();
 		} catch (IOException e) {
 			delConnected(sock);
+			if (debug) {
+				e.printStackTrace();
+			}
 			return false;
 		}
 		return true;
@@ -697,15 +714,20 @@ public class Node {
 	 * @return 存活返回true
 	 */
 	public boolean detect(InetAddress addr, int port) {
-
-		try (NodeSocket sock = new NodeSocket(new Socket(addr, port))) {
+		logInfo(addr.getHostAddress() + "开始检测");
+		
+		NodeSocket sock = null;
+		try  {
+			Socket _sock = new Socket();
+			_sock.connect(new InetSocketAddress(addr, port), 2000);
+			sock = new NodeSocket(_sock);
 			// 发送协议头
 			sock.getOutputStream().write(HANDSHAKE_FLAG);
 			// 发送探测消息
 			sendTo(sock, new NodeDetection());
 
 			// 获取响应
-			InputStream in = sock.getInputStream();
+			DataInputStream in = new DataInputStream(sock.getInputStream());
 
 			// 验证协议头
 			byte[] buffer = new byte[HANDSHAKE_FLAG.length];
@@ -715,17 +737,28 @@ public class Node {
 			}
 			buffer = null;
 
-			int msg_type = in.read() & 0xff;
-			int msg_len = (in.read() << 8 + in.read()) & 0xffff;
+			int msg_type = in.readUnsignedByte();
+			int msg_len = in.readUnsignedShort();
 
 			Message msg;
 			msg = Registry.newMessageInstance(msg_type);
 			msg.input(in, msg_len);
-
+			logInfo(addr.getHostAddress() + "检测完成");
 			return msg instanceof NodeDetection;
 
 		} catch (Exception e) {
+			if (debug) {
+				e.printStackTrace();
+			}
+			logInfo(addr.getHostAddress() + "检测失败");
 			return false;
+		} finally {
+			try {
+				if (sock != null) {
+					sock.close();
+				}
+			} catch (IOException e) {
+			}
 		}
 	}
 }

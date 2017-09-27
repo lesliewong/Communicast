@@ -91,7 +91,7 @@ public class LimitedRandomSet<T> implements Set<T>{
 	 * @param elements
 	 * @return HashSet<T> 新添加元素的集合
 	 */
-	 synchronized public Set<T> addAll(Collection<T> elements, Predicate<T> filter) {
+	 synchronized public Set<T> addAll(Collection<T> elements, Predicate<T> removeIfCondition) {
 		Set<T> newElements = new HashSet<T>();
 
 		// find out new elements
@@ -102,12 +102,12 @@ public class LimitedRandomSet<T> implements Set<T>{
 				newElements.add(element);
 			}
 		}
-
+		
 		// filter new elements to add
-		if (filter != null) {
-			newElements.removeIf(filter);
+		if (removeIfCondition != null) {
+			newElements.removeIf(removeIfCondition);
 		}
-
+		
 		// add new elements to local set asynchronously
 		if (!newElements.isEmpty()) {
 			holdSet.addAll(newElements);

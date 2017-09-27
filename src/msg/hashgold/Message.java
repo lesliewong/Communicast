@@ -1,8 +1,8 @@
 package msg.hashgold;
 
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
 
 import net.hashgold.Responser;
 
@@ -31,12 +31,12 @@ public interface Message {
 	 * @param out
 	 * @throws IOException 
 	 */
-	public void output(OutputStream out) throws IOException;
+	public void output(DataOutputStream out) throws IOException;
 	
 	
 	/**
 	 * 从流读入消息
 	 * @param in
 	 */
-	public void input(InputStream in, int len) throws IOException;
+	public void input(DataInputStream in, int len) throws IOException;
 }
