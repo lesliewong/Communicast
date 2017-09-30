@@ -10,18 +10,20 @@ import java.security.NoSuchAlgorithmException;
  *
  */
 public class BloomFilter {
-	public static final int HASH_TRANSFORM_ROUNDS = 6;//进行多少轮哈希转换
+	public static final int MAP_CHECKPOINT_NUM = 6;//设置多少个检查点
 	
-	private final int bit_map_size;//过滤器大小,字节
+	private final int bit_map_size;//过滤器大小,bits
+	private final int check_block_len;
 	private byte[] map;
 	
 	/**
 	 * 指定清空周期,位数实例化过滤器
 	 * @param period
-	 * @param max_capacity
+	 * @param map_size 过滤器大小,字节
 	 */
 	public BloomFilter(int period, int map_size) {
-		bit_map_size = map_size;
+		bit_map_size = map_size * 8;
+		check_block_len = (int)Math.ceil( (Math.log(bit_map_size) / Math.log(2)));
 		clear();
 	}
 	
@@ -32,23 +34,28 @@ public class BloomFilter {
 	 * @return 数据已存在返回false
 	 */
 	public boolean add(byte[] buffer) {
-		byte[] to_digest = new byte[buffer.length + 1];
-		System.arraycopy(buffer, 0, to_digest, 0, buffer.length);
-		buffer = null;
-		
-		for(int i = 1; i<= HASH_TRANSFORM_ROUNDS; i++){
-//			to_digest[to_digest.length - 1] = (byte)i;
-//			bit_map_size * 8
-		}
-		
 		try {
-			MessageDigest.getInstance("MD5").digest(buffer);
+			buffer = MessageDigest.getInstance("MD5").digest(buffer);
+			int startByte;
+			int startBit;
+			int bitMapPointer;
+			int consumed;
+			for(int i = 0; i< MAP_CHECKPOINT_NUM; i++) {
+				startBit = check_block_len * i ;
+				startByte = startBit/8;
+				startBit %= 8;
+				//(buffer[startByte] >> (8 - startBit - )) & ((byte)0x8f >> (Math.min(8, check_block_len) -1 ));
 			
+			}
 		} catch (NoSuchAlgorithmException e) {
 			e.printStackTrace();
 		}
 		return true;
 		
+	}
+	
+	public boolean exists(byte[] digest) {
+		return false;
 	}
 	
 	/**
