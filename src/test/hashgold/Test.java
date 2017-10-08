@@ -1,66 +1,74 @@
 package test.hashgold;
 
 import java.io.IOException;
-import java.lang.reflect.Array;
-import java.net.InetSocketAddress;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.Random;
-import java.util.Set;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 
-import collection.hashgold.LimitedRandomSet;
 import exception.hashgold.ConnectionFull;
 import net.hashgold.Node;
 
 public class Test {
-
-	public static void main(String[] args) throws IOException, ConnectionFull  {
-//		Node server = new Node();
-//		server.max_connections = 1;
-//		//server.debug = true;
-//		Set<InetSocketAddress> initSet = new HashSet<InetSocketAddress>();
-//		server.listen();
-//		initSet.add(new InetSocketAddress("202.12.31.77", 443));
-//		initSet.add(new InetSocketAddress("2404:6800:8005::68", 80));
-//		server.addPublicNodes(initSet);
-//		
-//		
-//		
-//		Node client1 = new Node();
-//		client1.debug = true;
-//		client1.connect(server.getServerAddress(), server.getServerPort());
-//		server.waitForServer();
-		try {
-			LimitedRandomSet<Integer> set= new LimitedRandomSet<Integer>(10);
-			Random rnd = new Random();
-			System.out.println("添加元素");
-			for(int i = 0; i< 8; i++) {
-				int n = rnd.nextInt(100);
-				set.add(n);
-				System.out.print(n+",");
-			}
-			ArrayList<Integer> addList = new ArrayList<Integer> ();
-			Collections.addAll(addList, new Integer[]{1000,2000,3000,1111});
-			set.addAll(addList);
-			System.out.println();
-			System.out.println("留存元素");
-			Iterator<Integer> it = set.iterator();
-			while(it.hasNext()) {
-				System.out.print(it.next()+",");
-			}
-			System.out.println();
-			System.out.println("随机选择3元素");
-			it = set.pick(3).iterator();
-			while(it.hasNext()) {
-				System.out.print(it.next()+",");
-			}
-			
-		} catch (Exception e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
+	
+	private static class ListenThread extends Thread {
+		private final Node node;
+		private final int port;
+		private final InetAddress addr;
+		
+		ListenThread(int port, String addr, boolean debug) throws UnknownHostException {
+			node = new Node();
+			node.debug = debug;
+			this.port = port;
+			this.addr = InetAddress.getByName(addr);
+			this.setDaemon(true);
+			this.start();
 		}
+		
+		ListenThread(boolean debug) {
+			node = new Node();
+			node.debug = debug;
+			port = 0;
+			addr = null;
+			this.setDaemon(true);
+			this.start();
+		}
+		
+		ListenThread(int port,boolean debug) {
+			node = new Node();
+			node.debug = debug;
+			this.port = port;
+			addr = null;
+			this.setDaemon(true);
+			this.start();
+		}
+		
+		public Node getNode() {
+			return node;
+		}
+		
+		public void run() {
+			try {
+				if (port == 0) {
+					node.listen();
+				} else if(addr == null) {
+					node.listen(port);
+				} else {
+					node.listen(port, 50, addr);
+				}
+				
+			} catch (IOException e) {
+				e.printStackTrace();
+				System.exit(2);
+			}
+		}
+	}
+
+	public static void main(String[] args) throws IOException, ConnectionFull, InterruptedException  {
+		Thread server = new ListenThread(9000, true);
+		Node client = new Node();
+		client.debug = true;
+		client.connect(InetAddress.getLocalHost(), 9000);
+		server.join();
+		
 	}
 
 }

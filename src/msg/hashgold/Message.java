@@ -12,6 +12,7 @@ import net.hashgold.Responser;
  *
  */
 public interface Message {
+	
 	/**
 	 * 返回一个整型的消息类型
 	 * @return

@@ -4,6 +4,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.NetworkInterface;
@@ -26,6 +27,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
 
+import collection.hashgold.BloomFilter;
 import collection.hashgold.LimitedRandomSet;
 import exception.hashgold.ConnectionFull;
 import exception.hashgold.DuplicateMessageNumber;
@@ -55,10 +57,10 @@ public class Node {
 
 		@Override
 		public void run() {
-			logInfo(  "<<<--" +  _msg.getClass(), _sock);
+			logInfo("<<<--" + _msg.getClass(), _sock);
 			_msg.onReceive(new Responser(Node.this, _sock));
-			
-			//收到消息后发现连接未加入或被移除则关闭socket
+
+			// 收到消息后发现连接未加入或被移除则关闭socket
 			if (!connected_nodes.contains(_sock)) {
 				try {
 					_sock.close();
@@ -104,7 +106,7 @@ public class Node {
 			super(message_loop_group, new Runnable() {
 				public void run() {
 					try {
-						//logInfo("接收新连接", _sock);
+						// logInfo("接收新连接", _sock);
 
 						DataInputStream in = new DataInputStream(_sock.getInputStream());
 						// 发送协议头
@@ -150,48 +152,48 @@ public class Node {
 								msg = Registry.newMessageInstance(msg_type);
 
 								msg.input(in, msg_len);
-								//logInfo("消息长度" + msg_len, _sock);
+								// logInfo("消息长度" + msg_len, _sock);
 
-								//收到第一个消息
+								// 收到第一个消息
 								if (!node_added) {
 									if (_sock.isClient) {
-										//客户端
-										
-										if (! (msg instanceof ConnectionRefuse)) {//服务器未拒绝
+										// 客户端
+
+										if (!(msg instanceof ConnectionRefuse)) {// 服务器未拒绝
 											node_added = true;
 										}
 									} else {
-										//服务端
+										// 服务端
 										if (!(msg instanceof NodeDetection)) {
 											if (connected_nodes.size() >= max_connections) {
-												//检查是否超过服务器最大连接数
-													sendTo(_sock, new ConnectionRefuse("Connections are full"));
-													logInfo("超过最大连接数" + max_connections, _sock);
+												// 检查是否超过服务器最大连接数
+												sendTo(_sock, new ConnectionRefuse("Connections are full"));
+												logInfo("超过最大连接数" + max_connections, _sock);
 											} else {
-												//接受新连接
+												// 接受新连接
 												node_added = true;
-											}	
+											}
 										}
-										
+
 									}
-									
+
 									if (node_added) {
 										addConnected(_sock);
 										logInfo("加入新节点", _sock);
 									}
 								}
-								
-								//只有接受的连接或者探测和拒绝消息被处理
+
+								// 只有接受的连接或者探测和拒绝消息被处理
 								if (node_added || msg instanceof NodeDetection || msg instanceof ConnectionRefuse) {
 									worker_pool.execute(new MessageCallback(msg, _sock));
 								}
-								
-								//更新服务器响应时间
+
+								// 更新服务器响应时间
 								if (node_added && _sock.isClient) {
 									last_active_time.put(_sock, getTimestamp());
 								}
-								
-								//未加入连接池则退出消息循环
+
+								// 未加入连接池则退出消息循环
 								if (!node_added) {
 									return;
 								}
@@ -228,15 +230,21 @@ public class Node {
 	public static final int heart_beat_interval = 15;// 心跳间隔秒,超过一个心跳间隔未收到对方消息则主动发出一个心跳,超过3个心跳间隔时间无响应将断开连接
 
 	public static int public_nodes_list_size = 500; // 保存公共节点数量限制
-	
-	public static int connect_timeout = 500;//连接超时,毫秒
+
+	public static int connect_timeout = 500;// 连接超时,毫秒
 
 	public int max_connections = 50;// 最大连接数量;
 
 	public boolean debug = false;// 调试日志
 
+	private static final int bloom_filter_size;// 布隆过滤器空间
+
 	static {
+		// 协议头
 		HANDSHAKE_FLAG = "HASHGOLD".getBytes();
+
+		// 布隆过滤器大小,默认8MB
+		bloom_filter_size = 1024 * 1024 * 8;
 
 		// 注册消息类型
 		try {
@@ -259,8 +267,6 @@ public class Node {
 
 	private final CopyOnWriteArrayList<NodeSocket> connected_nodes;// 连接节点
 
-	private Thread listen_thread;// 监听线程
-
 	private final ThreadGroup message_loop_group;// 消息循环线程组
 
 	private ConcurrentHashMap<NodeSocket, Integer> last_active_time;// 心跳状态,socket
@@ -268,6 +274,8 @@ public class Node {
 																	// 最后接收消息时间(秒)
 
 	private ScheduledExecutorService heart_beater;// 心跳起搏器
+
+	private BloomFilter bloom_filter;// 布隆过滤器
 
 	private final ExecutorService worker_pool;// 消息处理线程池
 
@@ -314,14 +322,17 @@ public class Node {
 
 		// 公共节点列表
 		try {
+			bloom_filter = new BloomFilter(bloom_filter_size, 0.5);
 			public_nodes_list = new LimitedRandomSet<InetSocketAddress>(public_nodes_list_size);
 		} catch (Exception e) {
 			e.printStackTrace();
+			System.exit(1);
 		}
 	}
-	
+
 	/**
 	 * 获取部分公共节点
+	 * 
 	 * @param n
 	 * @return
 	 */
@@ -336,10 +347,10 @@ public class Node {
 		}
 		return null;
 	}
-	
-	
+
 	/**
 	 * 获取全部公共节点
+	 * 
 	 * @return
 	 */
 	public LimitedRandomSet<InetSocketAddress> getPublicNodesList() {
@@ -372,8 +383,8 @@ public class Node {
 	// >>>客户端模式
 
 	/**
-	 * 添加公共节点
-	 * 会对新节点自动探测过滤无效节点
+	 * 添加公共节点 会对新节点自动探测过滤无效节点
+	 * 
 	 * @param addresses
 	 */
 	public void addPublicNodes(Set<InetSocketAddress> addresses) {
@@ -383,8 +394,7 @@ public class Node {
 			public boolean test(InetSocketAddress socketAddr) {
 				// 对节点列表进行探测
 				InetAddress addr = socketAddr.getAddress();
-				return isOwnedAddress(addr) || !isInternetAddress(addr)
-						|| !detect(addr, socketAddr.getPort());
+				return isOwnedAddress(addr) || !isInternetAddress(addr) || !detect(addr, socketAddr.getPort());
 			}
 		});
 		logInfo("检测完成,列表长度" + public_nodes_list.size());
@@ -467,7 +477,7 @@ public class Node {
 		if (connected_nodes.size() >= max_connections) {
 			throw new ConnectionFull("Max connection:" + max_connections);
 		}
-		
+
 		// 开始心跳
 		if (last_active_time == null) {
 			last_active_time = new ConcurrentHashMap<NodeSocket, Integer>();
@@ -478,7 +488,7 @@ public class Node {
 		Socket _sock = new Socket();
 		_sock.connect(new InetSocketAddress(dest, port), connect_timeout);
 		NodeSocket sock = new NodeSocket(_sock, true);
-		
+
 		new MessageLoopThread(sock).start();// 开启消息循环
 		logInfo("主动连接", sock);
 
@@ -548,20 +558,6 @@ public class Node {
 		listen(0, 50, InetAddress.getByName("0.0.0.0"));
 	}
 
-	/**
-	 * 等待服务器结束
-	 */
-	public void waitForServer() {
-		if (listen_thread != null) {
-			try {
-				listen_thread.join();
-			} catch (InterruptedException e) {
-				// 主进程退出
-				shutdown();
-			}
-		}
-	}
-
 	// <<<公共接口
 
 	/**
@@ -588,40 +584,35 @@ public class Node {
 	 */
 	public void listen(int port, int backlog, InetAddress bindAddr) throws IOException {
 		sock_serv = new ServerSocket(port, backlog, bindAddr);
-		// >>>开启新线程监听连接
-		listen_thread = new Thread() {
-			public void run() {
-				logInfo("开始监听,本地地址:" + sock_serv.getInetAddress().getHostAddress() + ":" + sock_serv.getLocalPort());
-				while (true) {
+		// >>>开始监听连接
 
-					if (this.isInterrupted()) {
-						// 服务器关闭
-						try {
-							sock_serv.close();
-						} catch (IOException e) {
-						}
-						logInfo("监听关闭");
-						return;
-					}
-					
-					try {
-						NodeSocket sock = new NodeSocket(sock_serv.accept());
-						// >>>启动消息循环线程
-						new MessageLoopThread(sock).start();
-						// <<<启动消息循环线程
-					} catch (IOException e) {
-						e.printStackTrace();
-						break;
-					}
+		logInfo("开始监听,本地地址:" + sock_serv.getInetAddress().getHostAddress() + ":" + sock_serv.getLocalPort());
+		while (true) {
+			if (Thread.currentThread().isInterrupted()) {
+				// 服务器关闭
+				try {
+					sock_serv.close();
+				} catch (IOException e) {
 				}
-
-				// 服务器异常结束关闭节点
-				shutdown();
+				logInfo("监听关闭");
+				return;
 			}
-		};
-		listen_thread.setDaemon(true);
-		listen_thread.start();
-		// <<<开启新线程监听连接
+
+			try {
+				NodeSocket sock = new NodeSocket(sock_serv.accept());
+				// >>>启动消息循环线程
+				new MessageLoopThread(sock).start();
+				// <<<启动消息循环线程
+			} catch (IOException e) {
+				e.printStackTrace();
+				break;
+			}
+		}
+
+		// 服务器异常结束关闭节点
+		shutdown();
+
+		// <<<开始监听连接
 	}
 
 	/**
@@ -644,36 +635,44 @@ public class Node {
 	 * 
 	 * @param sock
 	 * @param message
-	 * @param isForward 是否转发
+	 * @param isForward
+	 *            是否转发
 	 * @return 失败false
 	 * @throws MessageTooLong
 	 */
 	boolean sendTo(NodeSocket sock, Message message, boolean isForward) {
-		logInfo( message.getClass() + "--->>>", sock);
+		logInfo(message.getClass() + "--->>>", sock);
 		try {
-			
-			ByteArrayOutputStream out = new ByteArrayOutputStream();
 
-			message.output(new DataOutputStream(out));
-			int msg_type = message.getType();
-			
-			if (isForward) {
-				// TODO 转发通过过滤器
-				
-				return true;
-			}
-			DataOutputStream rawOut = new DataOutputStream(sock.getOutputStream());
-
-			int msg_len = out.size();
+			ByteArrayOutputStream arr_out = new ByteArrayOutputStream();
+			DataOutputStream data_arr_out = new DataOutputStream(arr_out);
+			message.output(data_arr_out);// 打包消息体
+			int msg_len = data_arr_out.size();// 取得消息长度
 			if (msg_len > 65535) {
 				System.err.println("Message type " + message.getType() + " too long");
 				return false;
 			}
+			int msg_type = message.getType();// 消息类型
 
-			rawOut.write(msg_type);// 消息类型
-			//logInfo("消息长度" + msg_len);
-			rawOut.writeShort(msg_len);
-			out.writeTo(rawOut);// 消息体
+			// 重新组装消息
+			ByteArrayOutputStream arr_out_complete = new ByteArrayOutputStream();
+			data_arr_out = new DataOutputStream(arr_out_complete);
+			data_arr_out.write(msg_type);
+			data_arr_out.writeShort(msg_len);
+			arr_out.writeTo(arr_out_complete);
+			arr_out = null;
+			data_arr_out = null;
+
+			// logInfo("消息长度" + msg_len);
+
+			if (isForward) {
+				if (!bloom_filter.add(arr_out_complete.toByteArray())) {
+					logInfo("过滤远端的重复转发消息" + message.getClass(), sock);
+					return true;
+				}
+			}
+			OutputStream rawOut = sock.getOutputStream();
+			arr_out_complete.writeTo(rawOut);
 			rawOut.flush();
 		} catch (IOException e) {
 			delConnected(sock);
@@ -684,7 +683,7 @@ public class Node {
 		}
 		return true;
 	}
-	
+
 	boolean sendTo(NodeSocket sock, Message message) {
 		return sendTo(sock, message, false);
 	}
@@ -694,15 +693,6 @@ public class Node {
 	 */
 	public void shutdown() {
 		logInfo("服务关闭..");
-
-		if (listen_thread != null) {
-			try {
-				listen_thread.interrupt();// 结束监听线程
-				sock_serv.close();
-			} catch (IOException e) {
-			}
-		}
-
 		if (heart_beater != null) {
 			heart_beater.shutdown();// 停止心跳
 		}
@@ -726,9 +716,9 @@ public class Node {
 	 */
 	public boolean detect(InetAddress addr, int port) {
 		logInfo(addr.getHostAddress() + "开始检测");
-		
+
 		NodeSocket sock = null;
-		try  {
+		try {
 			Socket _sock = new Socket();
 			_sock.connect(new InetSocketAddress(addr, port), 2000);
 			sock = new NodeSocket(_sock);
