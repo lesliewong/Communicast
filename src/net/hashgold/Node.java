@@ -49,19 +49,32 @@ public class Node {
 	 *
 	 */
 	private class MessageCallback implements Runnable {
-		private Message _msg;
-		private NodeSocket _sock;
+		private final Message _msg;
+		private final NodeSocket _sock;
+		private final boolean isFlood;
 
-		MessageCallback(Message message, NodeSocket sock) {
+		MessageCallback(Message message, NodeSocket sock, boolean isFlood) {
 			_msg = message;
 			_sock = sock;
+			this.isFlood = isFlood;
 		}
 
 		@Override
 		public void run() {
-			logInfo("<<<--" + _msg.getClass(), _sock);
-			_msg.onReceive(new Responser(Node.this, _sock, _msg));
-
+			byte[] raw_msg;
+			if (isFlood) {
+				raw_msg = Node.this.packMessage(_msg, isFlood);
+			} else {
+				raw_msg = null;
+			}
+			
+			if (!isFlood || Node.this.bloom_filter.add(raw_msg)) {
+				logInfo("<<<--" + _msg.getClass(), _sock);
+				_msg.onReceive(new Responser(Node.this, _sock, raw_msg));
+			} else {
+				logInfo("阻止重复转发消息"+_msg.getClass());
+			}
+			
 			// 收到消息后发现连接未加入或被移除则关闭socket
 			if (!connected_nodes.contains(_sock)) {
 				try {
@@ -143,10 +156,12 @@ public class Node {
 
 						int msg_type;// 消息类型
 						int msg_len;// 消息长度
+						boolean is_flood;//是否泛洪
 						boolean node_added = false;
 
 						do {
 							msg_type = in.readUnsignedByte();
+							is_flood = in.readBoolean();
 							msg_len = in.readUnsignedShort();
 							try {
 								Message msg;
@@ -187,7 +202,7 @@ public class Node {
 
 								// 只有接受的连接或者探测和拒绝消息被处理
 								if (node_added || msg instanceof NodeDetection || msg instanceof ConnectionRefuse) {
-									worker_pool.execute(new MessageCallback(msg, _sock));
+									worker_pool.execute(new MessageCallback(msg, _sock, is_flood));
 								}
 
 								// 更新服务器响应时间
@@ -233,7 +248,7 @@ public class Node {
 
 	public static int public_nodes_list_size = 500; // 保存公共节点数量限制
 
-	public static int connect_timeout = 500;// 连接超时,毫秒
+	public static int connect_timeout = 1500;// 连接超时,毫秒
 
 	public int max_connections = 50;// 最大连接数量;
 
@@ -245,8 +260,8 @@ public class Node {
 		// 协议头
 		HANDSHAKE_FLAG = "HASHGOLD".getBytes();
 
-		// 布隆过滤器大小,默认4MB
-		bloom_filter_size = 1024 * 1024 * 4;
+		// 布隆过滤器大小,默认1MB
+		bloom_filter_size = 1024 * 1024 * 1;
 
 		// 注册消息类型
 		try {
@@ -436,46 +451,31 @@ public class Node {
 	 * @return 成功发送到多少节点
 	 */
 	public int broadcast(Message message) {
-		return flood(message, null);
+		return flood(packMessage(message, true), null);
 	}
 
-	/**
-	 * 转发来自source的消息
-	 * 
-	 * @param message
-	 * @param source
-	 * @return
-	 */
-	int forward(Message message, NodeSocket source) {
-		return flood(message, source);
-	}
-	
 	
 	/**
 	 * 消息泛洪
-	 * @param message
+	 * @param _msg
 	 * @param exclude
 	 * @return
 	 */
-	private int flood(Message message, NodeSocket exclude) {
+	int flood(byte[] _msg, NodeSocket exclude) {
 		int nSuccess = 0;
-		byte[] data_pack = packMessage(message);
-		if (bloom_filter.add(data_pack)) {
-			for (NodeSocket sock : connected_nodes) {
-				if (!sock.equals(exclude)) {
-					try {
-						OutputStream out = sock.getOutputStream();
-						out.write(data_pack);
-						out.flush();
-						nSuccess++;
-					} catch (IOException e) {
-						delConnected(sock);
-					}
+		for (NodeSocket sock : connected_nodes) {
+			if (exclude == null || !sock.equals(exclude)) {
+				try {
+					OutputStream out = sock.getOutputStream();
+					out.write(_msg);
+					out.flush();
+					nSuccess++;
+				} catch (IOException e) {
+					delConnected(sock);
 				}
 			}
-		} else {
-			logInfo("阻止重复转发消息"+message.getClass(), exclude);
 		}
+
 		return nSuccess;
 	}
 	
@@ -671,7 +671,7 @@ public class Node {
 		logInfo(message.getClass() + "--->>>", sock);
 		try {
 			OutputStream rawOut = sock.getOutputStream();
-			rawOut.write(packMessage(message));
+			rawOut.write(packMessage(message, false));
 			rawOut.flush();
 		} catch (IOException e) {
 			e.printStackTrace();
@@ -681,7 +681,7 @@ public class Node {
 	
 	}
 
-	private byte[] packMessage(Message message) {
+	private byte[] packMessage(Message message, boolean isFlood) {
 		ByteArrayOutputStream arr_out = new ByteArrayOutputStream();
 		DataOutputStream data_arr_out = new DataOutputStream(arr_out);
 		ByteArrayOutputStream arr_out_complete = new ByteArrayOutputStream();
@@ -697,6 +697,7 @@ public class Node {
 			// 重新组装消息
 			data_arr_out = new DataOutputStream(arr_out_complete);
 			data_arr_out.write(msg_type);
+			data_arr_out.writeBoolean(isFlood);
 			data_arr_out.writeShort(msg_len);
 
 			arr_out.writeTo(arr_out_complete);
@@ -760,6 +761,7 @@ public class Node {
 			buffer = null;
 
 			int msg_type = in.readUnsignedByte();
+			in.readBoolean();
 			int msg_len = in.readUnsignedShort();
 
 			Message msg;

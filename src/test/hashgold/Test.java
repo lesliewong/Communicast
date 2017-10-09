@@ -3,7 +3,11 @@ package test.hashgold;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
+import java.util.HashSet;
+import java.util.Random;
+import java.util.Set;
 
+import collection.hashgold.BloomFilter;
 import exception.hashgold.AlreadyConnected;
 import exception.hashgold.ConnectionFull;
 import msg.hashgold.HelloWorld;
@@ -68,8 +72,8 @@ public class Test {
 		//运行5个节点
 		ListenThread th_node1 = new ListenThread(9000, false);
 		ListenThread th_node2 = new ListenThread(9001, false);
-		ListenThread th_node3 = new ListenThread(9002, true);
-		ListenThread th_node4 = new ListenThread(9003, true);
+		ListenThread th_node3 = new ListenThread(9002, false);
+		ListenThread th_node4 = new ListenThread(9003, false);
 		ListenThread th_node5 = new ListenThread(9004, false);
 		
 		Node node1 = th_node1.getNode();
@@ -100,6 +104,45 @@ public class Test {
 		
 		
 		th_node5.join();
+		
+		
+//		try {
+//			BloomFilter filter = new BloomFilter(512, 0.5);
+//			int val;
+//			Random rnd = new Random();
+//			Set<Integer> the_set = new HashSet<Integer>();
+//			int rightCount = 0;
+//			int testNum = 500000;
+//			for(int i = 1; i <= testNum; i++) {
+//				val = rnd.nextInt();
+//				if (filter.add((""+val).getBytes())) {
+//					
+//					//System.out.println(i + ". " +val + " 不存在,已添加");
+//					if (the_set.contains(val)) {
+//						//System.out.println("判断错误!");
+//					} else {
+//						//System.out.println("判断正确!");
+//						rightCount++;
+//					}
+//					the_set.add(val);
+//				} else {
+//					//System.out.println(i + ". " +val + " 添加过!");
+//					if (the_set.contains(val)) {
+//						//System.out.println("判断正确!");
+//						rightCount++;
+//					} else {
+//						//System.out.println("判断错误!");
+//					}
+//				}
+//			}
+//			
+//			System.out.println("正确率:"+ String.format("%.2f", (double)rightCount/testNum * 100) + "%");
+//			
+//			
+//		} catch (Exception e) {
+//			// TODO Auto-generated catch block
+//			e.printStackTrace();
+//		}
 		
 	}
 

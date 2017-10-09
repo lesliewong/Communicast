@@ -3,7 +3,6 @@ package msg.hashgold;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
-import java.net.InetAddress;
 import java.util.Date;
 
 import net.hashgold.Responser;
@@ -30,7 +29,7 @@ public class HelloWorld implements Message {
 
 	@Override
 	public void onReceive(Responser respon) {
-		System.out.println("收到世界问候:" + message + " 时间:" +new Date(send_time*1000) );
+		System.out.println("收到世界问候:" + message + " 时间:" +new Date(send_time*1000) + "本机端口:" + respon.getLocalNode().getServerPort() );
 		//转发
 		respon.forward();
 	}
