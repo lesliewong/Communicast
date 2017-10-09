@@ -78,7 +78,9 @@ public class Node {
 			// 收到消息后发现连接未加入或被移除则关闭socket
 			if (!connected_nodes.contains(_sock)) {
 				try {
-					_sock.close();
+					if (_sock != null) {
+						_sock.close();
+					}
 				} catch (IOException e) {
 				}
 			}
@@ -451,6 +453,7 @@ public class Node {
 	 * @return 成功发送到多少节点
 	 */
 	public int broadcast(Message message) {
+		worker_pool.execute(new MessageCallback(message, null, true));//消息给自己发送一份
 		return flood(packMessage(message, true), null);
 	}
 
@@ -654,7 +657,12 @@ public class Node {
 	}
 
 	private void logInfo(String string, NodeSocket sock) {
-		logInfo(string + ",远程节点:" + sock.getInetAddress().getHostAddress() + ":" + sock.getPort());
+		if (sock == null) {
+			logInfo(string);
+		} else {
+			logInfo(string + ",远程节点:" + sock.getInetAddress().getHostAddress() + ":" + sock.getPort());
+		}
+		
 	}
 
 	/**
