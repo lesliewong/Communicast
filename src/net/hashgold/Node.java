@@ -29,11 +29,13 @@ import java.util.function.Predicate;
 
 import collection.hashgold.BloomFilter;
 import collection.hashgold.LimitedRandomSet;
+import exception.hashgold.AlreadyConnected;
 import exception.hashgold.ConnectionFull;
 import exception.hashgold.DuplicateMessageNumber;
 import exception.hashgold.UnrecognizedMessage;
 import msg.hashgold.ConnectionRefuse;
 import msg.hashgold.HeartBeat;
+import msg.hashgold.HelloWorld;
 import msg.hashgold.Message;
 import msg.hashgold.NodeDetection;
 import msg.hashgold.NodesExchange;
@@ -58,7 +60,7 @@ public class Node {
 		@Override
 		public void run() {
 			logInfo("<<<--" + _msg.getClass(), _sock);
-			_msg.onReceive(new Responser(Node.this, _sock));
+			_msg.onReceive(new Responser(Node.this, _sock, _msg));
 
 			// 收到消息后发现连接未加入或被移除则关闭socket
 			if (!connected_nodes.contains(_sock)) {
@@ -135,8 +137,8 @@ public class Node {
 						// >>>循环读取消息
 
 						/**
-						 * 消息格式,传输的都是无符号数 =========================== ||1B
-						 * 消息类型|2B 消息长度|NB 正文|| ===========================
+						 * 消息格式,传输的都是无符号数 =========================== ||1B 消息类型|2B 消息长度|NB 正文||
+						 * ===========================
 						 */
 
 						int msg_type;// 消息类型
@@ -243,8 +245,8 @@ public class Node {
 		// 协议头
 		HANDSHAKE_FLAG = "HASHGOLD".getBytes();
 
-		// 布隆过滤器大小,默认8MB
-		bloom_filter_size = 1024 * 1024 * 8;
+		// 布隆过滤器大小,默认4MB
+		bloom_filter_size = 1024 * 1024 * 4;
 
 		// 注册消息类型
 		try {
@@ -252,6 +254,7 @@ public class Node {
 			Registry.registerMessage(new NodeDetection());// 探测节点1
 			Registry.registerMessage(new NodesExchange());// 节点列表交换2
 			Registry.registerMessage(new ConnectionRefuse());// 拒绝连接3
+			Registry.registerMessage(new HelloWorld());// 问候测试4
 		} catch (DuplicateMessageNumber e) {
 			e.printStackTrace();
 		}
@@ -433,13 +436,7 @@ public class Node {
 	 * @return 成功发送到多少节点
 	 */
 	public int broadcast(Message message) {
-		int nSuccess = 0;
-		for (NodeSocket sock : connected_nodes) {
-			if (sendTo(sock, message)) {
-				nSuccess++;
-			}
-		}
-		return nSuccess;
+		return flood(message, null);
 	}
 
 	/**
@@ -450,14 +447,39 @@ public class Node {
 	 * @return
 	 */
 	int forward(Message message, NodeSocket source) {
+		return flood(message, source);
+	}
+	
+	
+	/**
+	 * 消息泛洪
+	 * @param message
+	 * @param exclude
+	 * @return
+	 */
+	private int flood(Message message, NodeSocket exclude) {
 		int nSuccess = 0;
-		for (NodeSocket sock : connected_nodes) {
-			if (!sock.equals(source) && sendTo(sock, message)) {
-				nSuccess++;
+		byte[] data_pack = packMessage(message);
+		if (bloom_filter.add(data_pack)) {
+			for (NodeSocket sock : connected_nodes) {
+				if (!sock.equals(exclude)) {
+					try {
+						OutputStream out = sock.getOutputStream();
+						out.write(data_pack);
+						out.flush();
+						nSuccess++;
+					} catch (IOException e) {
+						delConnected(sock);
+					}
+				}
 			}
+		} else {
+			logInfo("阻止重复转发消息"+message.getClass(), exclude);
 		}
 		return nSuccess;
 	}
+	
+	
 
 	// <<<客户端模式
 
@@ -472,8 +494,9 @@ public class Node {
 	 * @param port
 	 * @throws IOException
 	 * @throws ConnectionFull
+	 * @throws AlreadyConnected 
 	 */
-	synchronized public void connect(InetAddress dest, int port) throws IOException, ConnectionFull {
+	synchronized public void connect(InetAddress dest, int port) throws IOException, ConnectionFull, AlreadyConnected {
 		if (connected_nodes.size() >= max_connections) {
 			throw new ConnectionFull("Max connection:" + max_connections);
 		}
@@ -488,6 +511,10 @@ public class Node {
 		Socket _sock = new Socket();
 		_sock.connect(new InetSocketAddress(dest, port), connect_timeout);
 		NodeSocket sock = new NodeSocket(_sock, true);
+		if (connected_nodes.contains(sock)) {
+			sock.close();
+			throw new AlreadyConnected(sock.getInetAddress().getHostAddress() + ":" + sock.getPort());
+		}
 
 		new MessageLoopThread(sock).start();// 开启消息循环
 		logInfo("主动连接", sock);
@@ -640,53 +667,47 @@ public class Node {
 	 * @return 失败false
 	 * @throws MessageTooLong
 	 */
-	boolean sendTo(NodeSocket sock, Message message, boolean isForward) {
+	boolean sendTo(NodeSocket sock, Message message) {
 		logInfo(message.getClass() + "--->>>", sock);
 		try {
+			OutputStream rawOut = sock.getOutputStream();
+			rawOut.write(packMessage(message));
+			rawOut.flush();
+		} catch (IOException e) {
+			e.printStackTrace();
+			return false;
+		}	
+		return true;
+	
+	}
 
-			ByteArrayOutputStream arr_out = new ByteArrayOutputStream();
-			DataOutputStream data_arr_out = new DataOutputStream(arr_out);
+	private byte[] packMessage(Message message) {
+		ByteArrayOutputStream arr_out = new ByteArrayOutputStream();
+		DataOutputStream data_arr_out = new DataOutputStream(arr_out);
+		ByteArrayOutputStream arr_out_complete = new ByteArrayOutputStream();
+		try {
 			message.output(data_arr_out);// 打包消息体
 			int msg_len = data_arr_out.size();// 取得消息长度
 			if (msg_len > 65535) {
 				System.err.println("Message type " + message.getType() + " too long");
-				return false;
+				return null;
 			}
 			int msg_type = message.getType();// 消息类型
 
 			// 重新组装消息
-			ByteArrayOutputStream arr_out_complete = new ByteArrayOutputStream();
 			data_arr_out = new DataOutputStream(arr_out_complete);
 			data_arr_out.write(msg_type);
 			data_arr_out.writeShort(msg_len);
+
 			arr_out.writeTo(arr_out_complete);
-			arr_out = null;
-			data_arr_out = null;
-
-			// logInfo("消息长度" + msg_len);
-
-			if (isForward) {
-				if (!bloom_filter.add(arr_out_complete.toByteArray())) {
-					logInfo("过滤远端的重复转发消息" + message.getClass(), sock);
-					return true;
-				}
-			}
-			OutputStream rawOut = sock.getOutputStream();
-			arr_out_complete.writeTo(rawOut);
-			rawOut.flush();
 		} catch (IOException e) {
-			delConnected(sock);
-			if (debug) {
-				e.printStackTrace();
-			}
-			return false;
+
+			e.printStackTrace();
+			return null;
 		}
-		return true;
+		return arr_out_complete.toByteArray();
 	}
 
-	boolean sendTo(NodeSocket sock, Message message) {
-		return sendTo(sock, message, false);
-	}
 
 	/**
 	 * 关闭服务
@@ -720,7 +741,7 @@ public class Node {
 		NodeSocket sock = null;
 		try {
 			Socket _sock = new Socket();
-			_sock.connect(new InetSocketAddress(addr, port), 2000);
+			_sock.connect(new InetSocketAddress(addr, port), connect_timeout);
 			sock = new NodeSocket(_sock);
 			// 发送协议头
 			sock.getOutputStream().write(HANDSHAKE_FLAG);

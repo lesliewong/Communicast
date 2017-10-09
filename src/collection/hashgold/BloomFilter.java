@@ -3,6 +3,7 @@ package collection.hashgold;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /**
@@ -20,12 +21,15 @@ public class BloomFilter {
 	private Byte[] map;
 	private final AtomicInteger map_length;
 	private final ReentrantReadWriteLock lock;
+	private final Condition condition_full;
+	private final Thread clear_thread;//清理线程
+	private final int mask = ~0 << 7;
 
 	/**
 	 * 指定清空周期,位数实例化过滤器
 	 * 
 	 * @param period
-	 * @param map_size
+	 * @param map_sizeW
 	 *            过滤器大小,字节
 	 * @throws InvalidFilterSize
 	 */
@@ -34,12 +38,25 @@ public class BloomFilter {
 		double block_len = Math.log(bit_map_size) / Math.log(2);
 		check_block_len = (int) Math.ceil(block_len);
 		if (check_block_len > block_len) {
-			throw new InvalidFilterSize(block_len);
+			throw new InvalidFilterSize("Filter size has to be a power of two");
+		}
+		
+		int max_size = (int) Math.pow(2,512/MAP_CHECKPOINT_NUM);
+		if (bit_map_size > max_size) {
+			throw new InvalidFilterSize("Filter too big,maximum:"+max_size/8+"B");
 		}
 		load_factor = loadFactor;
 		map_length = new AtomicInteger();
 		lock = new ReentrantReadWriteLock();
-		clear();
+		condition_full = lock.writeLock().newCondition();
+		clear_thread = new Thread() {
+			public void run() {
+				clear();
+			}
+		};
+		map = new Byte[bit_map_size/8];
+		clear_thread.setDaemon(true);
+		clear_thread.start();
 	}
 
 	/**
@@ -50,7 +67,7 @@ public class BloomFilter {
 	 */
 	public boolean add(byte[] buffer) {
 		try {
-			buffer = MessageDigest.getInstance("MD5").digest(buffer);
+			buffer = MessageDigest.getInstance("SHA-512").digest(buffer);
 			int current_byte = 0;
 			int bit_offset = 0;
 			int consumed = 0;
@@ -65,7 +82,7 @@ public class BloomFilter {
 			lock.readLock().lock();
 			do {
 				to_consume_bits = Math.min(8 - bit_offset, check_block_len - consumed);
-				map_position |= (buffer[current_byte] << bit_offset & 0x80 >> to_consume_bits & 0xff) << consumed;
+				map_position |= (buffer[current_byte] << bit_offset & mask >> to_consume_bits >>> (8-to_consume_bits) & 0xff) << consumed;
 				consumed += to_consume_bits;
 				bit_offset += to_consume_bits;
 				if (bit_offset > 7) {
@@ -75,13 +92,14 @@ public class BloomFilter {
 				
 				if (consumed % check_block_len == 0) {
 					//检查点
-					check_byte = map_position/8;
-					check_bit = map_position % 8;
+					long pointer = Integer.toUnsignedLong(map_position);
+					check_byte = (int) (pointer/8);
+					check_bit = (int) (pointer % 8);
 					if ((map[check_byte] << check_bit & 0x80) != 0x80) {
 						//置为1
 						exists = false;
 						synchronized(map[check_byte]) {
-							map[check_byte] =  (byte) (map[check_byte] | 0x80 >>> check_bit);
+							map[check_byte] =  (byte) (map[check_byte] | 0x80 >> check_bit);
 						}
 					}
 				
@@ -94,20 +112,17 @@ public class BloomFilter {
 			
 			if (!exists) {
 				//计数+1
-				int current_len = map_length.incrementAndGet();
-				lock.readLock().unlock();
-				if (current_len == bit_map_size * load_factor) {
+				if (map_length.incrementAndGet() == bit_map_size * load_factor) {
 					//清空
-					clear();
+					lock.writeLock().lock();
+					condition_full.signalAll();
+					lock.writeLock().unlock();
 				} 
 				
-			} else {
-				lock.readLock().unlock();
-			}
+			} 
+			lock.readLock().unlock();
 			
 			return !exists;
-
-			
 		} catch (NoSuchAlgorithmException e) {
 			e.printStackTrace();
 		}
@@ -119,16 +134,21 @@ public class BloomFilter {
 	 * 清空位表
 	 */
 	private void clear() {
-		lock.writeLock().lock();
-		map_length.set(0);
-		map = new Byte[bit_map_size/8];
-		lock.writeLock().unlock();
+		if (!lock.writeLock().tryLock()) {
+			return;
+		}
+		do {
+			condition_full.awaitUninterruptibly();
+			map_length.set(0);
+			map = new Byte[bit_map_size/8];
+		} while (true);
 	}
 }
 
+@SuppressWarnings("serial")
 class InvalidFilterSize extends Exception {
 
-	public InvalidFilterSize(double block_len) {
-		super(""+block_len);
+	public InvalidFilterSize(String string) {
+		super(string);
 	}
 }

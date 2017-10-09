@@ -12,10 +12,12 @@ import msg.hashgold.Message;
 public final class Responser {
 	private final Node _node;
 	private final NodeSocket _sock;
+	private final Message _msg;
 	
-	Responser(Node node, NodeSocket sock) {
+	Responser(Node node, NodeSocket sock, Message sourceMessage) {
 		_node = node;
 		_sock = sock;
+		_msg = sourceMessage;
 	}
 	
 	/**
@@ -32,8 +34,8 @@ public final class Responser {
 	 * @param message
 	 * @return
 	 */
-	public int forward(Message message) {
-		return _node.forward(message, _sock);
+	public int forward() {
+		return _node.forward(_msg, _sock);
 	}
 	
 	
