@@ -152,7 +152,7 @@ public class Node {
 						// >>>循环读取消息
 
 						/**
-						 * 消息格式,传输的都是无符号数 =========================== ||1B 消息类型|2B 消息长度|NB 正文||
+						 * 消息格式,传输的都是无符号数 =========================== ||1B 消息类型|1B flood标记|2B 消息长度|NB 正文||
 						 * ===========================
 						 */
 
@@ -212,10 +212,11 @@ public class Node {
 									last_active_time.put(_sock, getTimestamp());
 								}
 
-								// 未加入连接池则退出消息循环
-								if (!node_added) {
+								// 未加入连接池或线程被中断
+								if (!node_added || Thread.currentThread().isInterrupted()) {
 									return;
 								}
+								
 							} catch (InstantiationException | IllegalAccessException e) {
 								e.printStackTrace();
 								break;
@@ -224,7 +225,6 @@ public class Node {
 								logInfo("无法识别消息", _sock);
 								break;
 							}
-
 						} while (true);
 						// <<<循环读取消息
 
@@ -300,6 +300,8 @@ public class Node {
 	private final ExecutorService worker_pool;// 消息处理线程池
 
 	public NodeConnectedEvent onConnect; // 连接订阅者
+	
+	private Thread listen_thread;//监听线程
 
 	public NodeDisconnectEvent onDisconnecct; // 断开订阅者
 
@@ -350,6 +352,16 @@ public class Node {
 		}
 	}
 
+	
+	/**
+	 * 获取已连接节点数
+	 * @return
+	 */
+	public int getConnectedNum() {
+		return connected_nodes.size();
+	}
+	
+	
 	/**
 	 * 获取部分公共节点
 	 * 
@@ -539,7 +551,7 @@ public class Node {
 							onDisconnecct.trigger(sock.getInetAddress(), sock.getPort(), null);
 						}
 					};
-					t.setDaemon(true);
+					t.setDaemon(false);
 					t.start();
 				}
 			}
@@ -574,7 +586,7 @@ public class Node {
 		if (sock_serv.isBound()) {
 			return sock_serv.getLocalPort();
 		}
-		return -1;
+		return 0;
 	}
 
 	/**
@@ -617,30 +629,32 @@ public class Node {
 		// >>>开始监听连接
 
 		logInfo("开始监听,本地地址:" + sock_serv.getInetAddress().getHostAddress() + ":" + sock_serv.getLocalPort());
-		while (true) {
-			if (Thread.currentThread().isInterrupted()) {
-				// 服务器关闭
-				try {
-					sock_serv.close();
-				} catch (IOException e) {
+		
+			listen_thread = new Thread() {
+			public void run() {
+				while (true) {
+					try {
+						NodeSocket sock = new NodeSocket(sock_serv.accept());
+						// >>>启动消息循环线程
+						new MessageLoopThread(sock).start();
+						// <<<启动消息循环线程
+					}catch (IOException e) {
+						return;
+					}
 				}
-				logInfo("监听关闭");
-				return;
-			}
 
-			try {
-				NodeSocket sock = new NodeSocket(sock_serv.accept());
-				// >>>启动消息循环线程
-				new MessageLoopThread(sock).start();
-				// <<<启动消息循环线程
-			} catch (IOException e) {
-				e.printStackTrace();
-				break;
+				
 			}
+		};
+		listen_thread.start();
+		try {
+			listen_thread.join();
+		} catch (InterruptedException e) {
+			//中断,结束监听
+			logInfo("中断监听");
+			sock_serv.close();
 		}
-
-		// 服务器异常结束关闭节点
-		shutdown();
+		
 
 		// <<<开始监听连接
 	}
@@ -723,12 +737,19 @@ public class Node {
 	 */
 	public void shutdown() {
 		logInfo("服务关闭..");
+		//结束监听
+		if (listen_thread != null && listen_thread.isAlive()) {
+			listen_thread.interrupt();
+		}
+		
+		message_loop_group.interrupt();//关闭消息循环
+		
 		if (heart_beater != null) {
 			heart_beater.shutdown();// 停止心跳
 		}
-
+		
 		worker_pool.shutdown();// 结束工作线程池
-
+		
 		// 断开所有节点
 		for (NodeSocket sock : connected_nodes) {
 			delConnected(sock);
@@ -769,7 +790,7 @@ public class Node {
 			buffer = null;
 
 			int msg_type = in.readUnsignedByte();
-			in.readBoolean();
+			in.skip(1);
 			int msg_len = in.readUnsignedShort();
 
 			Message msg;
