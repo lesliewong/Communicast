@@ -12,14 +12,15 @@ import net.hashgold.Responser;
  *
  */
 public class ConnectionRefuse implements Message {
-	private byte[] msgBytes;
+	private String prompt;
+	private NodesExchange nodes_return;
 	
 	public ConnectionRefuse(){
-		msgBytes = new byte[0];
 	}
 	
-	public ConnectionRefuse(String message) {
-		msgBytes = message.getBytes();
+	public ConnectionRefuse(String message, NodesExchange nodesAvailable) {
+		prompt = message;
+		nodes_return = nodesAvailable;
 	}
 	
 	@Override
@@ -29,22 +30,26 @@ public class ConnectionRefuse implements Message {
 
 	@Override
 	public void onReceive(Responser respon) {
-		System.out.println(respon.getAddress().getHostAddress() + " refused your connection:"+ this);
+		nodes_return.onReceive(respon);
+		System.err.println(respon.getAddress().getHostAddress() + " connection rejected:"+ this);
 	}
 
 	@Override
 	public void output(DataOutputStream out) throws IOException {
-		out.write(msgBytes);
+		out.writeUTF(prompt);//写入可读的消息
+		out.writeShort(out.size());//消息长度
+		nodes_return.output(out);//可用节点列表
 	}
 
 	@Override
 	public void input(DataInputStream in, int len) throws IOException {
-		msgBytes = new byte[len];
-		in.read(msgBytes);
+		prompt = in.readUTF();
+		nodes_return = new NodesExchange();
+		nodes_return.input(in, len - in.readUnsignedShort() - 2);
 	}
 	
 	public String toString() {
-		return new String(msgBytes);
+		return prompt;
 	}
 
 }

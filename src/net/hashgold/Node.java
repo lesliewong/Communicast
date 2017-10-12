@@ -185,8 +185,10 @@ public class Node {
 										// 服务端
 										if (!(msg instanceof NodeDetection)) {
 											if (connected_nodes.size() >= max_connections) {
-												// 检查是否超过服务器最大连接数
-												sendTo(_sock, new ConnectionRefuse("Connections are full"));
+												// 超过服务器最大连接数
+												NodesExchange nodesAvailable = new NodesExchange(Node.this, ((NodesExchange)msg).max_req);//返回若干可用节点给客户端
+												nodesAvailable.max_req = 0;
+												sendTo(_sock, new ConnectionRefuse("Connections are full", nodesAvailable));
 												logInfo("超过最大连接数" + max_connections, _sock);
 											} else {
 												// 接受新连接
@@ -228,7 +230,7 @@ public class Node {
 						} while (true);
 						// <<<循环读取消息
 
-					} catch (IOException e) {
+					} catch (Exception e) {
 						// 消息读取出错
 						if (debug) {
 							e.printStackTrace();

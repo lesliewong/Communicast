@@ -24,7 +24,7 @@ public class NodesExchange implements Message {
 	private final int IPv6Size = 16;
 
 	private Set<InetSocketAddress> list;
-	private int max_req;
+	public int max_req;
 
 	public NodesExchange() {
 	}
