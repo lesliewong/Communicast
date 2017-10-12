@@ -36,8 +36,9 @@ public class ConnectionRefuse implements Message {
 
 	@Override
 	public void output(DataOutputStream out) throws IOException {
+		int start = out.size();
 		out.writeUTF(prompt);//写入可读的消息
-		out.writeShort(out.size());//消息长度
+		out.writeShort(out.size() - start);//消息长度
 		nodes_return.output(out);//可用节点列表
 	}
 
