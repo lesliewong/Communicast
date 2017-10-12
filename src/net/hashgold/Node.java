@@ -420,18 +420,32 @@ public class Node {
 	 * 添加公共节点 会对新节点自动探测过滤无效节点
 	 * 
 	 * @param addresses
+	 * @param no_detection 不检测连通性,默认关闭
+	 */
+	public void addPublicNodes(Set<InetSocketAddress> addresses, boolean no_detection) {
+		if (no_detection) {
+			public_nodes_list.addAll(addresses);
+		} else {
+			logInfo("检测节点列表..");
+			public_nodes_list.addAll(addresses, new Predicate<InetSocketAddress>() {
+				@Override
+				public boolean test(InetSocketAddress socketAddr) {
+					// 对节点列表进行探测
+					InetAddress addr = socketAddr.getAddress();
+					return isOwnedAddress(addr) || !isInternetAddress(addr) || !detect(addr, socketAddr.getPort());
+				}
+			});
+			logInfo("检测完成,列表长度" + public_nodes_list.size());
+		}
+	}
+	
+	
+	/**
+	 * 添加并检测公共节点列表
+	 * @param addresses
 	 */
 	public void addPublicNodes(Set<InetSocketAddress> addresses) {
-		logInfo("检测节点列表..");
-		public_nodes_list.addAll(addresses, new Predicate<InetSocketAddress>() {
-			@Override
-			public boolean test(InetSocketAddress socketAddr) {
-				// 对节点列表进行探测
-				InetAddress addr = socketAddr.getAddress();
-				return isOwnedAddress(addr) || !isInternetAddress(addr) || !detect(addr, socketAddr.getPort());
-			}
-		});
-		logInfo("检测完成,列表长度" + public_nodes_list.size());
+		addPublicNodes(addresses, false);
 	}
 
 	/**
