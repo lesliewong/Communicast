@@ -80,6 +80,7 @@ public class LimitedRandomSet<T> implements Set<T>{
 	
 	 
 
+	@SuppressWarnings("unchecked")
 	@Override
 	public boolean addAll(Collection<? extends T> c) {
 		return ! addAll((Collection<T>)c, null).isEmpty();
@@ -235,6 +236,7 @@ public class LimitedRandomSet<T> implements Set<T>{
 		return holdSet.toArray();
 	}
 
+	@SuppressWarnings("hiding")
 	@Override
 	public <T> T[] toArray(T[] a) {
 		return null;

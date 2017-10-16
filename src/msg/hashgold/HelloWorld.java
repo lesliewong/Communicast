@@ -3,7 +3,6 @@ package msg.hashgold;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
-import java.util.Date;
 
 import net.hashgold.Responser;
 
