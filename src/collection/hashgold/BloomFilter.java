@@ -89,12 +89,10 @@ public class BloomFilter {
 	 * @param buffer
 	 * @return 数据已存在返回false
 	 */
-	public boolean add(byte[] rawMsg) {
+	public boolean add(byte[] buffer) {
 		try {
-			byte[] buffer = new byte[rawMsg.length];
-			System.arraycopy(rawMsg, 0, buffer, 0, buffer.length);
-			mixWithMaskBytes(buffer);
 			buffer = MessageDigest.getInstance("SHA-512").digest(buffer);
+			mixWithMaskBytes(buffer);
 			int current_byte = 0;
 			int bit_offset = 0;
 			int consumed = 0;
