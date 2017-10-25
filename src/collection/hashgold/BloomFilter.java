@@ -79,7 +79,7 @@ public class BloomFilter {
 	 */
 	private void mixWithMaskBytes(byte[] buffer) {
 		for(int i = 0; i < collision_mask.length; i++) {
-			buffer[i] &= collision_mask[i];
+			buffer[i] ^= collision_mask[i];
 		}
 	}
 
