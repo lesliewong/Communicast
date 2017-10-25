@@ -2,6 +2,7 @@ package collection.hashgold;
 
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -23,6 +24,7 @@ public class BloomFilter {
 	private final ReentrantReadWriteLock lock;
 	private final Condition condition_full;
 	private final Thread clear_thread;//清理线程
+	private final byte[] collision_mask;//64位冲突掩码,避免一个消息在全网同时发生碰撞而广播失败
 	private final int mask = ~0 << 8;
 
 	/**
@@ -48,6 +50,8 @@ public class BloomFilter {
 		
 		//System.out.println("check block len " + check_block_len);
 		critical_size = (int) (loadFactor * bit_map_size);
+		collision_mask = new byte[8];
+		new Random().nextBytes(collision_mask);
 		map_length = new AtomicInteger();
 		lock = new ReentrantReadWriteLock();
 		condition_full = lock.writeLock().newCondition();
@@ -68,6 +72,16 @@ public class BloomFilter {
 		clear_thread.setDaemon(true);
 		clear_thread.start();
 	}
+	
+	/**
+	 * 用冲突掩码混合数据
+	 * @param buffer
+	 */
+	private void mixWithMaskBytes(byte[] buffer) {
+		for(int i = 0; i < collision_mask.length; i++) {
+			buffer[i] &= collision_mask[i];
+		}
+	}
 
 	/**
 	 * 添加数据
@@ -75,8 +89,11 @@ public class BloomFilter {
 	 * @param buffer
 	 * @return 数据已存在返回false
 	 */
-	public boolean add(byte[] buffer) {
+	public boolean add(byte[] rawMsg) {
 		try {
+			byte[] buffer = new byte[rawMsg.length];
+			System.arraycopy(rawMsg, 0, buffer, 0, buffer.length);
+			mixWithMaskBytes(buffer);
 			buffer = MessageDigest.getInstance("SHA-512").digest(buffer);
 			int current_byte = 0;
 			int bit_offset = 0;
