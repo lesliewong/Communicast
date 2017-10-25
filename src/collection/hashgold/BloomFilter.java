@@ -24,7 +24,7 @@ public class BloomFilter {
 	private final ReentrantReadWriteLock lock;
 	private final Condition condition_full;
 	private final Thread clear_thread;//清理线程
-	private final byte[] collision_mask;//64位冲突掩码,避免一个消息在全网同时发生碰撞而广播失败
+	private final byte[] collision_mask;//512位冲突掩码,避免一个消息在全网同时发生碰撞而广播失败
 	private final int mask = ~0 << 8;
 
 	/**
@@ -50,7 +50,7 @@ public class BloomFilter {
 		
 		//System.out.println("check block len " + check_block_len);
 		critical_size = (int) (loadFactor * bit_map_size);
-		collision_mask = new byte[8];
+		collision_mask = new byte[64];
 		new Random().nextBytes(collision_mask);
 		map_length = new AtomicInteger();
 		lock = new ReentrantReadWriteLock();
@@ -89,12 +89,10 @@ public class BloomFilter {
 	 * @param buffer
 	 * @return 数据已存在返回false
 	 */
-	public boolean add(byte[] rawMsg) {
+	public boolean add(byte[] buffer) {
 		try {
-			byte[] buffer = new byte[rawMsg.length];
-			System.arraycopy(rawMsg, 0, buffer, 0, buffer.length);
-			mixWithMaskBytes(buffer);
 			buffer = MessageDigest.getInstance("SHA-512").digest(buffer);
+			mixWithMaskBytes(buffer);
 			int current_byte = 0;
 			int bit_offset = 0;
 			int consumed = 0;
