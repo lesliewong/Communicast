@@ -1,5 +1,6 @@
 package net.hashgold;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
@@ -34,6 +35,7 @@ import exception.hashgold.ConnectionFull;
 import exception.hashgold.DuplicateMessageNumber;
 import exception.hashgold.UnrecognizedMessage;
 import msg.hashgold.ConnectionRefuse;
+import msg.hashgold.ConnectivityDetectProxy;
 import msg.hashgold.HeartBeat;
 import msg.hashgold.HelloWorld;
 import msg.hashgold.Message;
@@ -131,7 +133,7 @@ public class Node {
 
 						// 验证协议头
 						byte[] buffer = new byte[HANDSHAKE_FLAG.length];
-						in.read(buffer);
+						in.readFully(buffer);
 						// logInfo("协议头:"+new String(buffer));
 						if (!MessageDigest.isEqual(buffer, HANDSHAKE_FLAG)) {
 							_sock.close();
@@ -169,8 +171,10 @@ public class Node {
 								Message msg;
 
 								msg = Registry.newMessageInstance(msg_type);
-
-								msg.input(in, msg_len);
+								buffer = new byte[msg_len];
+								in.readFully(buffer);
+								msg.input(new DataInputStream(new ByteArrayInputStream(buffer)), msg_len);
+								buffer = null;
 								// logInfo("消息长度" + msg_len, _sock);
 
 								// 收到第一个消息
@@ -274,6 +278,7 @@ public class Node {
 			Registry.registerMessage(new NodesExchange());// 节点列表交换2
 			Registry.registerMessage(new ConnectionRefuse());// 拒绝连接3
 			Registry.registerMessage(new HelloWorld());// 问候测试4
+			Registry.registerMessage(new ConnectivityDetectProxy());// 连通代检测5
 		} catch (DuplicateMessageNumber e) {
 			e.printStackTrace();
 		}
@@ -423,20 +428,16 @@ public class Node {
 	 * @param no_detection 不检测连通性,默认关闭
 	 */
 	public void addPublicNodes(Set<InetSocketAddress> addresses, boolean no_detection) {
-		if (no_detection) {
-			public_nodes_list.addAll(addresses);
-		} else {
 			logInfo("检测节点列表..");
 			public_nodes_list.addAll(addresses, new Predicate<InetSocketAddress>() {
 				@Override
 				public boolean test(InetSocketAddress socketAddr) {
 					// 对节点列表进行探测
 					InetAddress addr = socketAddr.getAddress();
-					return isOwnedAddress(addr) || !isInternetAddress(addr) || !detect(addr, socketAddr.getPort());
+					return isOwnedAddress(addr) || !isInternetAddress(addr) || !no_detection && !detect(addr, socketAddr.getPort());
 				}
 			});
-			logInfo("检测完成,列表长度" + public_nodes_list.size());
-		}
+
 	}
 	
 	
@@ -454,7 +455,7 @@ public class Node {
 	 * @param addr
 	 * @return
 	 */
-	private static boolean isInternetAddress(InetAddress addr) {
+	public static boolean isInternetAddress(InetAddress addr) {
 		return !(addr.isAnyLocalAddress() || addr.isLinkLocalAddress() || addr.isLoopbackAddress() || addr.isMCGlobal()
 				|| addr.isMCLinkLocal() || addr.isMCNodeLocal() || addr.isMCOrgLocal() || addr.isMCSiteLocal()
 				|| addr.isMulticastAddress() || addr.isSiteLocalAddress());
@@ -485,14 +486,25 @@ public class Node {
 		return flood(packMessage(message, true), null);
 	}
 
+	/**
+	 * 随机向邻近节点发送请求
+	 * @param message 消息
+	 * @param exclude 剔除的邻居
+	 * @param limit 请求邻居数量
+	 * @return
+	 */
+	public int requestNeighbors(Message message, NodeSocket exclude,int limit) {
+		return flood(packMessage(message, false), exclude, limit);
+	}
 	
 	/**
 	 * 消息泛洪
 	 * @param _msg
 	 * @param exclude
+	 * @param limit 限制发送给节点数量
 	 * @return
 	 */
-	int flood(byte[] _msg, NodeSocket exclude) {
+	int flood(byte[] _msg, NodeSocket exclude, int limit) {
 		int nSuccess = 0;
 		for (NodeSocket sock : connected_nodes) {
 			if (exclude == null || !sock.equals(exclude)) {
@@ -500,7 +512,9 @@ public class Node {
 					OutputStream out = sock.getOutputStream();
 					out.write(_msg);
 					out.flush();
-					nSuccess++;
+					if (++nSuccess > limit && limit > 0) {
+						break;
+					}
 				} catch (IOException e) {
 					delConnected(sock);
 				}
@@ -508,6 +522,16 @@ public class Node {
 		}
 
 		return nSuccess;
+	}
+	
+	/**
+	 * 不限制数量进行泛洪
+	 * @param _msg
+	 * @param exclude
+	 * @return
+	 */
+	int flood(byte[] _msg, NodeSocket exclude) {
+		return flood(_msg, exclude, 0);
 	}
 	
 	
@@ -799,11 +823,10 @@ public class Node {
 
 			// 验证协议头
 			byte[] buffer = new byte[HANDSHAKE_FLAG.length];
-			in.read(buffer);
+			in.readFully(buffer);
 			if (!MessageDigest.isEqual(buffer, HANDSHAKE_FLAG)) {
 				return false;
 			}
-			buffer = null;
 
 			int msg_type = in.readUnsignedByte();
 			in.skip(1);
@@ -811,7 +834,10 @@ public class Node {
 
 			Message msg;
 			msg = Registry.newMessageInstance(msg_type);
-			msg.input(in, msg_len);
+			buffer = new byte[msg_len];
+			in.readFully(buffer);
+			msg.input(new DataInputStream(new ByteArrayInputStream(buffer)), msg_len);
+			buffer = null;
 			logInfo(addr.getHostAddress() + "检测完成");
 			return msg instanceof NodeDetection;
 

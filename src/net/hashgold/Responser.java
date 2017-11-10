@@ -77,6 +77,10 @@ public final class Responser {
 		return _sock.isClient;
 	}
 	
+	public NodeSocket getSock() {
+		return _sock;
+	}
+	
 	
 	/**
 	 * πÿ±’¡¨Ω”
