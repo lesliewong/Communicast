@@ -69,7 +69,7 @@ public class Test {
 				} else if(addr == null) {
 					node.listen(port);
 				} else {
-					node.listen(port, 50, addr);
+					node.listen(port, 50, addr, null);
 				}
 				
 			} catch (IOException e) {
@@ -95,12 +95,13 @@ public class Test {
 		Node node5 = th_node5.getNode();
 		Node node6 = th_node6.getNode();
 		
-		//利大札選
-		//2 -->1,2 --> 5
+//		//利大札選
+//		//2 -->1,2 --> 5
 		node2.connect(node1.getServerAddress(), node1.getServerPort());
 		node2.connect(node5.getServerAddress(), node5.getServerPort());
-		
-		//3 -->1,3 --> 2
+//		
+//		//3 -->1,3 --> 2
+		Thread.sleep(1000);
 		node3.connect(node1.getServerAddress(), node1.getServerPort());
 		node3.connect(node2.getServerAddress(), node2.getServerPort());
 		

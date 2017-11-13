@@ -312,7 +312,7 @@ public class Node {
 	
 	private Thread listen_thread;//监听线程
 
-	public NodeDisconnectEvent onDisconnecct; // 断开订阅者
+	public NodeDisconnectEvent onDisconnect; // 断开订阅者
 
 	private LimitedRandomSet<InetSocketAddress> public_nodes_list; // 公共节点列表
 
@@ -593,10 +593,10 @@ public class Node {
 		try {
 			sock.close();
 			if (connected_nodes.remove(sock)) {
-				if (onDisconnecct != null) {
+				if (onDisconnect != null) {
 					Thread t = new Thread() {
 						public void run() {
-							onDisconnecct.trigger(sock.getInetAddress(), sock.getPort(), null);
+							onDisconnect.trigger(sock.getInetAddress(), sock.getPort(), null);
 						}
 					};
 					t.setDaemon(false);
