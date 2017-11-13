@@ -644,8 +644,12 @@ public class Node {
 	 * @throws DuplicateBinding
 	 * @throws IOException
 	 */
+	public void listen(ListenSuccessEvent onSuccess) throws UnknownHostException, IOException {
+		listen(0, 50, InetAddress.getByName("0.0.0.0"), onSuccess);
+	}
+	
 	public void listen() throws UnknownHostException, IOException {
-		listen(0, 50, InetAddress.getByName("0.0.0.0"));
+		listen(null);
 	}
 
 	// <<<公共接口
@@ -659,7 +663,7 @@ public class Node {
 	 * @throws UnknownHostException
 	 */
 	public void listen(int port) throws UnknownHostException, IOException {
-		listen(port, 50, InetAddress.getByName("0.0.0.0"));
+		listen(port, 50, InetAddress.getByName("0.0.0.0"), null);
 	}
 
 	// >>>服务器模式
@@ -672,7 +676,7 @@ public class Node {
 	 * @throws DuplicateBinding
 	 * @throws IOException
 	 */
-	public void listen(int port, int backlog, InetAddress bindAddr) throws IOException {
+	public void listen(int port, int backlog, InetAddress bindAddr, ListenSuccessEvent onSuccess) throws IOException {
 		sock_serv = new ServerSocket(port, backlog, bindAddr);
 		// >>>开始监听连接
 
@@ -695,15 +699,20 @@ public class Node {
 			}
 		};
 		listen_thread.start();
+		
 		try {
-			listen_thread.join();
+			if (onSuccess != null) {
+				if (onSuccess.trigger(this)) {
+					listen_thread.join();
+				}
+			} else {
+				listen_thread.join();
+			}
 		} catch (InterruptedException e) {
 			//中断,结束监听
 			logInfo("中断监听");
-			sock_serv.close();
 		}
-		
-
+		sock_serv.close();
 		// <<<开始监听连接
 	}
 
