@@ -5,7 +5,10 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.util.HashSet;
+import java.util.Set;
 
+import collection.hashgold.SocketAddressPacker;
 import net.hashgold.Node;
 import net.hashgold.Responser;
 
@@ -61,7 +64,9 @@ public class ConnectivityDetectProxy implements Message {
 		}
 		//System.out.println(",ip:"+addr.getHostAddress() + " 端口:" + port + ",来自端口:"+respon.getPort());
 		if (this.status == RequestStatus.Success) {
-			local.getPublicNodesList().add(new InetSocketAddress(addr, port));
+			Set<InetSocketAddress> singleSet = new HashSet<InetSocketAddress>();
+			singleSet.add(new InetSocketAddress(addr, port));
+			local.addAndSharePublicNodes(singleSet, null);
 		}
 	}
 
@@ -74,7 +79,7 @@ public class ConnectivityDetectProxy implements Message {
 
 	@Override
 	public void input(DataInputStream in, int len) throws IOException {
-		int addrSize = len > NodesExchange.IPv4Size + 3 ? NodesExchange.IPv6Size:NodesExchange.IPv4Size;
+		int addrSize = len > SocketAddressPacker.IPv4Size + 3 ? SocketAddressPacker.IPv6Size:SocketAddressPacker.IPv4Size;
 		status =RequestStatus.values()[in.read()];
 		byte[] addrBuffer = new byte[addrSize];
 		in.read(addrBuffer);

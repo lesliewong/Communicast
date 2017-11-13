@@ -77,10 +77,11 @@ public class BloomFilter {
 	 * 用冲突掩码混合数据
 	 * @param buffer
 	 */
-	private void mixWithMaskBytes(byte[] buffer) {
-		for(int i = 0; i < collision_mask.length; i++) {
-			buffer[i] ^= collision_mask[i];
-		}
+	private byte[] appendMaskBytes(byte[] buffer) {
+		byte[] padded = new byte[buffer.length + collision_mask.length];
+		System.arraycopy(buffer, 0, padded, 0, buffer.length);
+		System.arraycopy(collision_mask, 0, padded, buffer.length, collision_mask.length);
+		return padded;
 	}
 
 	/**
@@ -91,8 +92,7 @@ public class BloomFilter {
 	 */
 	public boolean add(byte[] buffer) {
 		try {
-			buffer = MessageDigest.getInstance("SHA-512").digest(buffer);
-			mixWithMaskBytes(buffer);
+			buffer = MessageDigest.getInstance("SHA-512").digest(appendMaskBytes(buffer));
 			int current_byte = 0;
 			int bit_offset = 0;
 			int consumed = 0;

@@ -39,6 +39,7 @@ import msg.hashgold.ConnectivityDetectProxy;
 import msg.hashgold.HeartBeat;
 import msg.hashgold.HelloWorld;
 import msg.hashgold.Message;
+import msg.hashgold.NewNodesShare;
 import msg.hashgold.NodeDetection;
 import msg.hashgold.NodesExchange;
 import msg.hashgold.Registry;
@@ -279,6 +280,7 @@ public class Node {
 			Registry.registerMessage(new ConnectionRefuse());// 拒绝连接3
 			Registry.registerMessage(new HelloWorld());// 问候测试4
 			Registry.registerMessage(new ConnectivityDetectProxy());// 连通代检测5
+			Registry.registerMessage(new NewNodesShare());//新节点共享6
 		} catch (DuplicateMessageNumber e) {
 			e.printStackTrace();
 		}
@@ -425,16 +427,17 @@ public class Node {
 	 * 添加公共节点 会对新节点自动探测过滤无效节点
 	 * 
 	 * @param addresses
-	 * @param no_detection 不检测连通性,默认关闭
+	 * @param no_detection 不检测连通性
+	 * @return 
 	 */
-	public void addPublicNodes(Set<InetSocketAddress> addresses, boolean no_detection) {
+	public Set<InetSocketAddress> addPublicNodes(Set<InetSocketAddress> addresses, boolean no_detection) {
 			logInfo("检测节点列表..");
-			public_nodes_list.addAll(addresses, new Predicate<InetSocketAddress>() {
+			return public_nodes_list.addAll(addresses, new Predicate<InetSocketAddress>() {
 				@Override
 				public boolean test(InetSocketAddress socketAddr) {
 					// 对节点列表进行探测
 					InetAddress addr = socketAddr.getAddress();
-					return isOwnedAddress(addr) || !isInternetAddress(addr) || !no_detection && !detect(addr, socketAddr.getPort());
+					return isOwnedAddress(addr) || !isInternetAddress(addr) || addr == getServerAddress() || !no_detection && !detect(addr, socketAddr.getPort());
 				}
 			});
 
@@ -442,11 +445,16 @@ public class Node {
 	
 	
 	/**
-	 * 添加并检测公共节点列表
+	 * 添加并检测并共享公共节点列表
 	 * @param addresses
+	 * @param from 来源,可为null
+	 * @return 
 	 */
-	public void addPublicNodes(Set<InetSocketAddress> addresses) {
-		addPublicNodes(addresses, false);
+	public void addAndSharePublicNodes(Set<InetSocketAddress> addresses,NodeSocket from) {
+		Set<InetSocketAddress> newPublicAddresses = addPublicNodes(addresses, from == null);
+		if (newPublicAddresses.size() > 0) {
+			requestNeighbors(new NewNodesShare(newPublicAddresses), from, 0);
+		}
 	}
 
 	/**
