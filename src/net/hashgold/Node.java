@@ -19,6 +19,7 @@ import java.util.Date;
 import java.util.Enumeration;
 import java.util.Iterator;
 import java.util.Map.Entry;
+import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -55,18 +56,20 @@ public class Node {
 		private final Message _msg;
 		private final NodeSocket _sock;
 		private final boolean isFlood;
+		private final int serial;
 
-		MessageCallback(Message message, NodeSocket sock, boolean isFlood) {
+		MessageCallback(Message message, NodeSocket sock, boolean isFlood, int serial) {
 			_msg = message;
 			_sock = sock;
 			this.isFlood = isFlood;
+			this.serial = serial;
 		}
 
 		@Override
 		public void run() {
 			byte[] raw_msg;
 			if (isFlood) {
-				raw_msg = Node.this.packMessage(_msg, isFlood);
+				raw_msg = Node.this.packMessage(_msg, isFlood, serial);
 			} else {
 				raw_msg = null;
 			}
@@ -166,6 +169,11 @@ public class Node {
 						do {
 							msg_type = in.readUnsignedByte();
 							is_flood = in.readBoolean();
+							
+							int serial = 0;
+							if (is_flood) {
+								serial = in.readInt();
+							}
 							msg_len = in.readUnsignedShort();
 							try {
 								Message msg;
@@ -210,7 +218,7 @@ public class Node {
 
 								// 只有接受的连接或者探测和拒绝消息被处理
 								if (node_added || msg instanceof NodeDetection || msg instanceof ConnectionRefuse) {
-									worker_pool.execute(new MessageCallback(msg, _sock, is_flood));
+									worker_pool.execute(new MessageCallback(msg, _sock, is_flood, serial));
 								}
 
 								// 更新服务器响应时间
@@ -497,7 +505,7 @@ public class Node {
 	 */
 	public int broadcast(Message message) {
 		//worker_pool.execute(new MessageCallback(message, null, true));//消息给自己发送一份
-		return flood(packMessage(message, true), null);
+		return flood(packMessage(message, true, new Random().nextInt(Integer.MAX_VALUE)), null);
 	}
 
 	/**
@@ -508,7 +516,7 @@ public class Node {
 	 * @return
 	 */
 	public int requestNeighbors(Message message, NodeSocket exclude,int limit) {
-		return flood(packMessage(message, false), exclude, limit);
+		return flood(packMessage(message, false, 0), exclude, limit);
 	}
 	
 	/**
@@ -760,7 +768,7 @@ public class Node {
 		logInfo(message.getClass() + "--->>>", sock);
 		try {
 			OutputStream rawOut = sock.getOutputStream();
-			rawOut.write(packMessage(message, false));
+			rawOut.write(packMessage(message, false, 0));
 			rawOut.flush();
 			if (sock.isClient) {
 				last_active_time.replace(sock, getTimestamp());
@@ -774,7 +782,7 @@ public class Node {
 	
 	}
 
-	private byte[] packMessage(Message message, boolean isFlood) {
+	private byte[] packMessage(Message message, boolean isFlood, int serial) {
 		ByteArrayOutputStream arr_out = new ByteArrayOutputStream();
 		DataOutputStream data_arr_out = new DataOutputStream(arr_out);
 		ByteArrayOutputStream arr_out_complete = new ByteArrayOutputStream();
@@ -791,8 +799,10 @@ public class Node {
 			data_arr_out = new DataOutputStream(arr_out_complete);
 			data_arr_out.write(msg_type);
 			data_arr_out.writeBoolean(isFlood);
+			if (isFlood) {
+				data_arr_out.writeInt(serial);//32位序列号区分不同消息
+			}
 			data_arr_out.writeShort(msg_len);
-
 			arr_out.writeTo(arr_out_complete);
 		} catch (IOException e) {
 
@@ -860,7 +870,12 @@ public class Node {
 			}
 
 			int msg_type = in.readUnsignedByte();
-			in.skip(1);
+			
+			//if flood
+			if (in.readBoolean()) {
+				return false;
+			}
+			
 			int msg_len = in.readUnsignedShort();
 
 			Message msg;

@@ -58,6 +58,15 @@ public final class Responser {
 		}
 	}
 	
+	/**
+	 * 通过当前节点广播消息
+	 * @param message
+	 * @return
+	 */
+	public int broadcast(Message message) {
+		return _node.broadcast(message);
+	}
+	
 	
 	/**
 	 * 获取远程端口
