@@ -4,6 +4,7 @@ import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.util.HashSet;
 import java.util.Set;
 
 import collection.hashgold.SocketAddressPacker;
@@ -66,14 +67,19 @@ public class NodesExchange implements Message {
 			}
 		}
 		
+		boolean no_detect = false;
+		if (respon.isClient()) {
+			//对方是服务器添加到公共节点列表检测
+			if (list == null) {
+				list = new HashSet<InetSocketAddress>();
+				no_detect = true;
+			}
+			list.add(new InetSocketAddress(respon.getAddress(), respon.getPort()));
+		} 
+		
 		if (list != null) {
 			// 合并对方的公共节点列表
-			if (respon.isClient()) {
-				//对方是服务器添加到公共节点列表检测
-				list.add(new InetSocketAddress(respon.getAddress(), respon.getPort()));
-			} 
-
-			localNode.addAndSharePublicNodes(list, respon.getSock());
+			localNode.addAndSharePublicNodes(list, respon.getSock(), no_detect);
 		}
 		
 		

@@ -26,6 +26,9 @@ public final class Responser {
 	 * @return
 	 */
 	public boolean reply(Message message) {
+		if (_sock == null) {
+			return false;
+		}
 		return _node.sendTo(_sock, message);
 	}
 	
@@ -35,7 +38,7 @@ public final class Responser {
 	 * @return
 	 */
 	public int forward() {
-		if (_msg != null) {
+		if (_sock !=null && _msg != null) {
 			return _node.flood(_msg, _sock);
 		} else {
 			return 0;
@@ -48,7 +51,11 @@ public final class Responser {
 	 * @return
 	 */
 	public InetAddress getAddress() {
-		return _sock.getInetAddress();
+		if (_sock == null) {
+			return InetAddress.getLoopbackAddress();
+		} else {
+			return _sock.getInetAddress();
+		}
 	}
 	
 	
@@ -57,7 +64,11 @@ public final class Responser {
 	 * @return
 	 */
 	public int getPort() {
-		return _sock.getPort();
+		if (_sock == null) {
+			return 0;
+		} else {
+			return _sock.getPort();
+		}
 	}
 	
 	

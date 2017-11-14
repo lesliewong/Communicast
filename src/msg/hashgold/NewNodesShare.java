@@ -32,7 +32,7 @@ public class NewNodesShare implements Message {
 	public void onReceive(Responser respon) {
 		if (_list != null && _list.size() > 0) {
 			//向除来源外的邻居共享公共节点
-			respon.getLocalNode().addAndSharePublicNodes(_list, respon.getSock());	
+			respon.getLocalNode().addAndSharePublicNodes(_list, respon.getSock(), false);	
 		}
 	}
 

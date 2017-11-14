@@ -30,9 +30,9 @@ public class HeartBeat implements Message {
 	@Override
 	public void onReceive(Responser respon) {
 		//收到心跳服务器返回一个心跳应答
-		if (!respon.isClient()) {
-			respon.reply(this);
-		}
+//		if (!respon.isClient()) {
+//			respon.reply(this);
+//		}
 	}
 
 }

@@ -66,7 +66,7 @@ public class ConnectivityDetectProxy implements Message {
 		if (this.status == RequestStatus.Success) {
 			Set<InetSocketAddress> singleSet = new HashSet<InetSocketAddress>();
 			singleSet.add(new InetSocketAddress(addr, port));
-			local.addAndSharePublicNodes(singleSet, null);
+			local.addAndSharePublicNodes(singleSet, respon.getSock(), true);
 		}
 	}
 

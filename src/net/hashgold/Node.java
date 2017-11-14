@@ -109,6 +109,7 @@ public class Node {
 				if (entry.getValue() <= now - heart_beat_interval) {
 					// logInfo("发送心跳", entry.getKey());
 					sendTo(entry.getKey(), new HeartBeat());
+			
 				}
 			}
 		}
@@ -145,11 +146,9 @@ public class Node {
 
 						// 客户端发起节点交换请求
 						if (_sock.isClient) {
-							try {
-								sendTo(_sock, new NodesExchange(Node.this, 0));
-							} catch (Exception e) {
-								e.printStackTrace();
-							}
+								if (!sendTo(_sock, new NodesExchange(Node.this, 0))) {
+									return;
+								}
 						}
 
 						// >>>循环读取消息
@@ -310,6 +309,8 @@ public class Node {
 
 	public NodeConnectedEvent onConnect; // 连接订阅者
 	
+	public PublicNodesFound onNodesFound;//新节点发现
+	
 	private Thread listen_thread;//监听线程
 
 	public NodeDisconnectEvent onDisconnect; // 断开订阅者
@@ -405,7 +406,7 @@ public class Node {
 	 * @throws SocketException
 	 */
 	private void addConnected(NodeSocket sock) throws SocketException {
-		sock.setSoTimeout(heart_beat_interval * 3);
+		sock.setSoTimeout(0);
 		connected_nodes.add(sock);
 		if (onConnect != null) {
 			Thread t = new Thread() {
@@ -450,9 +451,14 @@ public class Node {
 	 * @param from 来源,可为null
 	 * @return 
 	 */
-	public void addAndSharePublicNodes(Set<InetSocketAddress> addresses,NodeSocket from) {
-		Set<InetSocketAddress> newPublicAddresses = addPublicNodes(addresses, from == null);
+	public void addAndSharePublicNodes(Set<InetSocketAddress> addresses,NodeSocket from, boolean dont_detect) {
+		logInfo("添加节点..", from);
+		Set<InetSocketAddress> newPublicAddresses = addPublicNodes(addresses, dont_detect);
 		if (newPublicAddresses.size() > 0) {
+			logInfo("转发节点..", from);
+			if (onNodesFound != null) {
+				onNodesFound.trigger(newPublicAddresses);
+			}
 			requestNeighbors(new NewNodesShare(newPublicAddresses), from, 0);
 		}
 	}
@@ -490,7 +496,7 @@ public class Node {
 	 * @return 成功发送到多少节点
 	 */
 	public int broadcast(Message message) {
-		worker_pool.execute(new MessageCallback(message, null, true));//消息给自己发送一份
+		//worker_pool.execute(new MessageCallback(message, null, true));//消息给自己发送一份
 		return flood(packMessage(message, true), null);
 	}
 
@@ -520,6 +526,9 @@ public class Node {
 					OutputStream out = sock.getOutputStream();
 					out.write(_msg);
 					out.flush();
+					if (sock.isClient) {
+						last_active_time.replace(sock, getTimestamp());
+					}
 					if (++nSuccess > limit && limit > 0) {
 						break;
 					}
@@ -591,7 +600,6 @@ public class Node {
 	 */
 	void delConnected(NodeSocket sock) {
 		try {
-			sock.close();
 			if (connected_nodes.remove(sock)) {
 				if (onDisconnect != null) {
 					Thread t = new Thread() {
@@ -603,6 +611,7 @@ public class Node {
 					t.start();
 				}
 			}
+			sock.close();
 			last_active_time.remove(sock);
 		} catch (Exception e) {
 		}
@@ -658,12 +667,13 @@ public class Node {
 	 * 监听指定端口
 	 * 
 	 * @param port
+	 * @param onSuccess
 	 * @throws IOException
 	 * @throws DuplicateBinding
 	 * @throws UnknownHostException
 	 */
-	public void listen(int port) throws UnknownHostException, IOException {
-		listen(port, 50, InetAddress.getByName("0.0.0.0"), null);
+	public void listen(int port, ListenSuccessEvent onSuccess) throws UnknownHostException, IOException {
+		listen(port, 50, InetAddress.getByName("0.0.0.0"), onSuccess);
 	}
 
 	// >>>服务器模式
@@ -752,8 +762,12 @@ public class Node {
 			OutputStream rawOut = sock.getOutputStream();
 			rawOut.write(packMessage(message, false));
 			rawOut.flush();
+			if (sock.isClient) {
+				last_active_time.replace(sock, getTimestamp());
+			}
 		} catch (IOException e) {
 			e.printStackTrace();
+			delConnected(sock);
 			return false;
 		}	
 		return true;
