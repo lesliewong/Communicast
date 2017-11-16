@@ -24,7 +24,7 @@ public class NewNodesShare implements Message {
 	}
 	
 	@Override
-	public int getType() {
+	public int getCode() {
 		return 6;
 	}
 

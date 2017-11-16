@@ -18,8 +18,8 @@ public class Registry {
 	 * @throws DuplicateMessageNumber 
 	 */
 	public static void registerMessage(Message message) throws DuplicateMessageNumber {
-		if (message_map.putIfAbsent(message.getType(), message.getClass()) != null) {
-			throw new DuplicateMessageNumber(message.getType());
+		if (message_map.putIfAbsent(message.getCode(), message.getClass()) != null) {
+			throw new DuplicateMessageNumber(message.getCode());
 		}
 	}
 	

@@ -17,7 +17,7 @@ public interface Message {
 	 * 返回一个整型的消息类型
 	 * @return
 	 */
-	public int getType();
+	public int getCode();
 	
 	
 	/**

@@ -37,7 +37,7 @@ public class NodesExchange implements Message {
 	}
 
 	@Override
-	public int getType() {
+	public int getCode() {
 		return 2;
 	}
 

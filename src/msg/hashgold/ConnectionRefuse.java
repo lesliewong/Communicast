@@ -24,7 +24,7 @@ public class ConnectionRefuse implements Message {
 	}
 	
 	@Override
-	public int getType() {
+	public int getCode() {
 		return 3;
 	}
 

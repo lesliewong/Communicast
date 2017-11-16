@@ -15,7 +15,7 @@ import net.hashgold.Responser;
 public class NodeDetection implements Message {
 
 	@Override
-	public int getType() {
+	public int getCode() {
 		return 1;
 	}
 

@@ -3,14 +3,12 @@ package test.hashgold;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
-import java.util.HashSet;
 import java.util.Random;
-import java.util.Set;
-
-import collection.hashgold.BloomFilter;
 import exception.hashgold.AlreadyConnected;
 import exception.hashgold.ConnectionFull;
+import exception.hashgold.DuplicateMessageNumber;
 import msg.hashgold.HelloWorld;
+import msg.hashgold.Registry;
 import net.hashgold.Node;
 
 public class Test {
@@ -30,7 +28,7 @@ public class Test {
 		
 		ListenThread(int port, String addr, boolean debug) throws UnknownHostException {
 			super(DemonThreads, "thread" + new Random().nextInt());
-			node = new Node();
+			node = new Node("demo net");
 			node.debug = debug;
 			this.port = port;
 			this.addr = InetAddress.getByName(addr);
@@ -40,7 +38,7 @@ public class Test {
 		
 		ListenThread(boolean debug) {
 			super(DemonThreads, "thread" + new Random().nextInt());
-			node = new Node();
+			node = new Node("demo net");
 			node.debug = debug;
 			port = 0;
 			addr = null;
@@ -50,7 +48,7 @@ public class Test {
 		
 		ListenThread(int port,boolean debug) {
 			super(DemonThreads, "thread" + new Random().nextInt());
-			node = new Node();
+			node = new Node("demo net");
 			node.debug = debug;
 			this.port = port;
 			addr = null;
@@ -67,7 +65,7 @@ public class Test {
 				if (port == 0) {
 					node.listen();
 				} else if(addr == null) {
-					node.listen(port);
+					node.listen(port, null);
 				} else {
 					node.listen(port, 50, addr, null);
 				}
@@ -80,13 +78,19 @@ public class Test {
 	}
 
 	public static void main(String[] args) throws IOException, ConnectionFull, InterruptedException, AlreadyConnected  {
+		try {
+			Registry.registerMessage(new HelloWorld());
+		} catch (DuplicateMessageNumber e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
 		//运行6个节点
 		ListenThread th_node1 = new ListenThread(9000, false);
 		ListenThread th_node2 = new ListenThread(9001, false);
 		ListenThread th_node3 = new ListenThread(9002, false);
 		ListenThread th_node4 = new ListenThread(9003, false);
 		ListenThread th_node5 = new ListenThread(9004, false);
-		ListenThread th_node6 = new ListenThread(9005, false);
+		ListenThread th_node6 = new ListenThread(9005, true);
 		
 		Node node1 = th_node1.getNode();
 		Node node2 = th_node2.getNode();
@@ -94,6 +98,9 @@ public class Test {
 		Node node4 = th_node4.getNode();
 		Node node5 = th_node5.getNode();
 		Node node6 = th_node6.getNode();
+		Node node7 = new Node(null);
+		Node node8 = new Node("network 2");
+		Node node9 = new Node("network 2");
 		
 //		//网络互联
 //		//2 -->1,2 --> 5
@@ -116,56 +123,32 @@ public class Test {
 		//6-->5
 		node6.connect(node5.getServerAddress(), node5.getServerPort());
 		
-		//从节点2广播一条消息,消息可被3,4在内的所有节点收到
+		//7-->1
+		node7.connect(node1.getServerAddress(), node1.getServerPort());
+		
+		//8-->2
+		node8.connect(node2.getServerAddress(), node2.getServerPort());
+		
+		//9-->4
+		node9.connect(node4.getServerAddress(), node4.getServerPort());
+		
+		Thread.sleep(2000);
+		//从节点6广播一条消息,消息可被3,4在内的所有节点收到
 		node6.broadcast(new HelloWorld("Dear,this is node 6 speaking"));
-
-		Thread.sleep(5000);
+		
+		//从节点9广播一条消息,消息可被8收到
+		//node9.broadcast(new HelloWorld("Dear,this is node 9 speaking"));
+		
+		Thread.sleep(4000);
 		node1.shutdown();
 		node2.shutdown();
 		node3.shutdown();
 		node4.shutdown();
 		node5.shutdown();
 		node6.shutdown();
-		
-		
-//		try {
-//			BloomFilter filter = new BloomFilter(512, 0.5);
-//			int val;
-//			Random rnd = new Random();
-//			Set<Integer> the_set = new HashSet<Integer>();
-//			int rightCount = 0;
-//			int testNum = 500000;
-//			for(int i = 1; i <= testNum; i++) {
-//				val = rnd.nextInt();
-//				if (filter.add((""+val).getBytes())) {
-//					
-//					//System.out.println(i + ". " +val + " 不存在,已添加");
-//					if (the_set.contains(val)) {
-//						//System.out.println("判断错误!");
-//					} else {
-//						//System.out.println("判断正确!");
-//						rightCount++;
-//					}
-//					the_set.add(val);
-//				} else {
-//					//System.out.println(i + ". " +val + " 添加过!");
-//					if (the_set.contains(val)) {
-//						//System.out.println("判断正确!");
-//						rightCount++;
-//					} else {
-//						//System.out.println("判断错误!");
-//					}
-//				}
-//			}
-//			
-//			System.out.println("正确率:"+ String.format("%.2f", (double)rightCount/testNum * 100) + "%");
-//			
-//			
-//		} catch (Exception e) {
-//			// TODO Auto-generated catch block
-//			e.printStackTrace();
-//		}
-		
+		node7.shutdown();
+		node8.shutdown();
+		node9.shutdown();
 	}
 
 }

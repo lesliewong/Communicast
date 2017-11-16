@@ -15,7 +15,7 @@ import net.hashgold.Responser;
 public class HeartBeat implements Message {
 
 	@Override
-	public int getType() {
+	public int getCode() {
 		return 0;
 	}
 

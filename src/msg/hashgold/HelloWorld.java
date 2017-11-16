@@ -3,7 +3,7 @@ package msg.hashgold;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
-//import java.util.Date;
+import java.util.Date;
 
 import net.hashgold.Responser;
 
@@ -23,16 +23,16 @@ public class HelloWorld implements Message {
 	}
 	
 	@Override
-	public int getType() {
+	public int getCode() {
 		return 4;
 	}
 
 	@Override
 	public void onReceive(Responser respon) {
-		respon.close();
-//		System.out.println("收到世界问候:" + message + " 时间:" +new Date(send_time*1000) + "本机端口:" + respon.getLocalNode().getServerPort() );
-//		//转发
-//		respon.forward();
+		//respon.close();
+		System.out.println("收到世界问候:" + message + " 时间:" +new Date(send_time*1000) + "远程端口:" + respon.getPort());
+		//转发
+		respon.forward();
 	}
 
 	@Override

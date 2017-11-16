@@ -1,5 +1,6 @@
 package net.hashgold;
 
+import java.io.BufferedInputStream;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
@@ -14,7 +15,9 @@ import java.net.Socket;
 import java.net.SocketException;
 import java.net.UnknownHostException;
 import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.Enumeration;
 import java.util.Iterator;
@@ -33,12 +36,10 @@ import collection.hashgold.BloomFilter;
 import collection.hashgold.LimitedRandomSet;
 import exception.hashgold.AlreadyConnected;
 import exception.hashgold.ConnectionFull;
-import exception.hashgold.DuplicateMessageNumber;
 import exception.hashgold.UnrecognizedMessage;
 import msg.hashgold.ConnectionRefuse;
 import msg.hashgold.ConnectivityDetectProxy;
 import msg.hashgold.HeartBeat;
-import msg.hashgold.HelloWorld;
 import msg.hashgold.Message;
 import msg.hashgold.NewNodesShare;
 import msg.hashgold.NodeDetection;
@@ -55,32 +56,20 @@ public class Node {
 	private class MessageCallback implements Runnable {
 		private final Message _msg;
 		private final NodeSocket _sock;
-		private final boolean isFlood;
-		private final int serial;
+		private byte[] rawData;
 
-		MessageCallback(Message message, NodeSocket sock, boolean isFlood, int serial) {
+		MessageCallback(Message message, NodeSocket sock, byte[] rawData) {
 			_msg = message;
 			_sock = sock;
-			this.isFlood = isFlood;
-			this.serial = serial;
+			this.rawData = rawData;
 		}
 
 		@Override
 		public void run() {
-			byte[] raw_msg;
-			if (isFlood) {
-				raw_msg = Node.this.packMessage(_msg, isFlood, serial);
-			} else {
-				raw_msg = null;
-			}
-			
-			if (!isFlood || Node.this.bloom_filter.add(raw_msg)) {
-				logInfo("<<<--" + _msg.getClass(), _sock);
-				_msg.onReceive(new Responser(Node.this, _sock, raw_msg));
-			} else {
-				logInfo("阻止重复转发消息"+_msg.getClass());
-			}
-			
+			logInfo("<<<--" + _msg.getClass(), _sock);
+			_msg.onReceive(new Responser(Node.this, _sock, rawData));
+			rawData = null;
+	
 			// 收到消息后发现连接未加入或被移除则关闭socket
 			if (!connected_nodes.contains(_sock)) {
 				try {
@@ -130,19 +119,21 @@ public class Node {
 			super(message_loop_group, new Runnable() {
 				public void run() {
 					try {
-						// logInfo("接收新连接", _sock);
-
-						DataInputStream in = new DataInputStream(_sock.getInputStream());
+						DataInputStream in = new DataInputStream(new BufferedInputStream(_sock.getInputStream(), 50));
+						if (!in.markSupported()) {
+							System.err.println("Message loop stream don't support mark");
+							return;
+						}
+						
 						// 发送协议头
 						_sock.getOutputStream().write(HANDSHAKE_FLAG);
-
+						
 						// 验证协议头
 						byte[] buffer = new byte[HANDSHAKE_FLAG.length];
 						in.readFully(buffer);
-						// logInfo("协议头:"+new String(buffer));
-						if (!MessageDigest.isEqual(buffer, HANDSHAKE_FLAG)) {
+						if (!Arrays.equals(buffer, HANDSHAKE_FLAG)) {
 							_sock.close();
-							logInfo("无效协议头", _sock);
+							logInfo("无效协议头"+ new String(buffer), _sock);
 							return;
 						}
 						buffer = null;
@@ -154,48 +145,130 @@ public class Node {
 								}
 						}
 
-						// >>>循环读取消息
-
-						/**
-						 * 消息格式,传输的都是无符号数 =========================== ||1B 消息类型|1B flood标记|2B 消息长度|NB 正文||
-						 * ===========================
-						 */
-
-						int msg_type;// 消息类型
+						int msg_type;// 消息类型:心跳0/探测节点1/节点列表交换2/拒绝连接3/连通代检测5/新节点共享6/自定义消息7
+						byte[] netID = new byte[16];//网络id
 						int msg_len;// 消息长度
+						int msg_code = 0;//消息代码
 						boolean is_flood;//是否泛洪
-						boolean node_added = false;
-
+						boolean node_added = false;//节点是否已经建立连接
+						int header_length;//消息头长度
+						byte[] header_buffer =  new byte[25];//消息头缓存
+						byte[] buffer_total = null;//完整消息缓存
+						
+						//进入消息循环
 						do {
-							msg_type = in.readUnsignedByte();
-							is_flood = in.readBoolean();
+							header_length = 0;
+							in.mark(25);		
+							//消息类型,是否泛洪		
+							msg_type = in.readUnsignedByte(); 
+							is_flood = msg_type >= 0x80;//是否泛洪
+							msg_type &= ~0x80;
+							header_length++;
 							
-							int serial = 0;
-							if (is_flood) {
-								serial = in.readInt();
+							
+							if (msg_type == 7) {
+								if (!node_added) {
+									//未连接不接收自定义消息
+									logInfo("拒绝未建立连接节点自定义消息", _sock);
+									break;
+								}
+							} else {
+								if (msg_type > 7) {
+									logInfo("无效消息类型", _sock);
+									break;
+								}
 							}
-							msg_len = in.readUnsignedShort();
+							
+							if (msg_type == 7) {
+								in.read(netID);//网络id
+								if (Arrays.equals(emptyNetID,netID)) {
+									//空网络不允许发送自定义消息
+									logInfo("无效网络", _sock);
+									break;
+								}
+								msg_code = in.readUnsignedShort();//消息代码
+								header_length += 16 + 2;
+							}
+							
+							msg_len = in.readUnsignedShort(); //消息长度
+							header_length += 2;
+							
+							if (is_flood) {
+								in.readInt();//消息序列号
+								header_length += 4;
+								in.reset();
+								in.read(header_buffer, 0, header_length);
+							}
+							
+							//读取消息体
+							buffer = new byte[msg_len];
+							in.readFully(buffer);
+							
+							// 更新服务器响应时间
+							if (node_added && _sock.isClient) {
+								last_active_time.put(_sock, getTimestamp());
+							}
+							
+							
+							if (is_flood) {
+								//过滤闭环的泛洪消息
+								buffer_total = new byte[header_length + buffer.length];
+								System.arraycopy(header_buffer, 0, buffer_total, 0, header_length);
+								System.arraycopy(buffer, 0, buffer_total, header_length, msg_len);
+								if (!bloom_filter.add(buffer_total)) {
+									logInfo("阻止闭环泛洪消息",_sock);
+									continue;
+								}	
+							}
+							
+							Message msg = null;
 							try {
-								Message msg;
-
-								msg = Registry.newMessageInstance(msg_type);
-								buffer = new byte[msg_len];
-								in.readFully(buffer);
+								// 消息类型:心跳0/探测节点1/节点列表交换2/拒绝连接3/连通代检测5/新节点共享6/自定义消息7
+								switch (msg_type) {
+								case 0:
+									msg = new HeartBeat();
+									break;
+								case 1:
+									msg = new NodeDetection();
+									break;
+								case 2:
+									msg = new NodesExchange();
+									break;
+								case 3:
+									msg = new ConnectionRefuse();
+									break;
+								case 5:
+									msg = new ConnectivityDetectProxy();
+									break;
+								case 6:
+									msg = new NewNodesShare();
+									break;
+								case 7:
+									if (!MessageDigest.isEqual(netID, Node.this.netID)) {
+										//非本网络消息直接转发
+										if (is_flood) {
+											flood(buffer_total, _sock);
+										}
+										buffer_total = null;
+										continue;
+									}
+									msg = Registry.newMessageInstance(msg_code);
+									break;
+								}
+								
+								//logInfo("收到消息,消息长度:"+buffer.length+ "字节" + " 标记长度:" + msg_len);
 								msg.input(new DataInputStream(new ByteArrayInputStream(buffer)), msg_len);
 								buffer = null;
-								// logInfo("消息长度" + msg_len, _sock);
-
-								// 收到第一个消息
+								
+								// 连接未建立
 								if (!node_added) {
 									if (_sock.isClient) {
-										// 客户端
-
-										if (!(msg instanceof ConnectionRefuse)) {// 服务器未拒绝
+										if (msg instanceof NodesExchange) {// 服务器接受连接
 											node_added = true;
 										}
 									} else {
 										// 服务端
-										if (!(msg instanceof NodeDetection)) {
+										if (msg instanceof NodesExchange) {
 											if (connected_nodes.size() >= max_connections) {
 												// 超过服务器最大连接数
 												NodesExchange nodesAvailable = new NodesExchange(Node.this, ((NodesExchange)msg).max_req);//返回若干可用节点给客户端
@@ -211,20 +284,22 @@ public class Node {
 									}
 
 									if (node_added) {
+										
 										addConnected(_sock);
+										
+										// 初始化服务器响应时间
+										if ( _sock.isClient) {
+											last_active_time.put(_sock, getTimestamp());
+										}
 										logInfo("加入新节点", _sock);
 									}
 								}
 
 								// 只有接受的连接或者探测和拒绝消息被处理
 								if (node_added || msg instanceof NodeDetection || msg instanceof ConnectionRefuse) {
-									worker_pool.execute(new MessageCallback(msg, _sock, is_flood, serial));
+									worker_pool.execute(new MessageCallback(msg, _sock, is_flood ? Arrays.copyOf(buffer_total, buffer_total.length):null));
 								}
-
-								// 更新服务器响应时间
-								if (node_added && _sock.isClient) {
-									last_active_time.put(_sock, getTimestamp());
-								}
+								buffer_total = null;
 
 								// 未加入连接池或线程被中断
 								if (!node_added || Thread.currentThread().isInterrupted()) {
@@ -236,7 +311,7 @@ public class Node {
 								break;
 							} catch (UnrecognizedMessage e) {
 								// 无法识别的消息,断开连接
-								logInfo("无法识别消息", _sock);
+								logInfo("无法识别的网络消息", _sock);
 								break;
 							}
 						} while (true);
@@ -258,7 +333,7 @@ public class Node {
 
 	}
 
-	public static byte[] HANDSHAKE_FLAG;// 协议握手标识
+	private final static byte[] HANDSHAKE_FLAG;// 协议握手标识
 
 	public static final int heart_beat_interval = 15;// 心跳间隔秒,超过一个心跳间隔未收到对方消息则主动发出一个心跳,超过3个心跳间隔时间无响应将断开连接
 
@@ -271,28 +346,8 @@ public class Node {
 	public boolean debug = false;// 调试日志
 
 	private static final int bloom_filter_size;// 布隆过滤器空间
-
-	static {
-		// 协议头
-		HANDSHAKE_FLAG = "HASHGOLD".getBytes();
-
-		// 布隆过滤器大小,默认1MB
-		bloom_filter_size = 1024 * 1024 * 1;
-
-		// 注册消息类型
-		try {
-			Registry.registerMessage(new HeartBeat());// 心跳0
-			Registry.registerMessage(new NodeDetection());// 探测节点1
-			Registry.registerMessage(new NodesExchange());// 节点列表交换2
-			Registry.registerMessage(new ConnectionRefuse());// 拒绝连接3
-			Registry.registerMessage(new HelloWorld());// 问候测试4
-			Registry.registerMessage(new ConnectivityDetectProxy());// 连通代检测5
-			Registry.registerMessage(new NewNodesShare());//新节点共享6
-		} catch (DuplicateMessageNumber e) {
-			e.printStackTrace();
-		}
-
-	}
+	
+	private final byte[] netID;//节点所属网络
 
 	private static int getTimestamp() {
 		return (int) (System.currentTimeMillis() / 1000);
@@ -326,8 +381,19 @@ public class Node {
 	private LimitedRandomSet<InetSocketAddress> public_nodes_list; // 公共节点列表
 
 	private static final ArrayList<InetAddress> local_addresses; // 本地IP地址
+	
+	private static final byte[] emptyNetID;
 
 	static {
+		//空网络ID
+		emptyNetID = new byte[16];
+		
+		// 协议头
+		HANDSHAKE_FLAG = "UnionP2P".getBytes();
+
+		// 布隆过滤器大小,默认1MB
+		bloom_filter_size = 1024 * 1024 * 1;
+				
 		// 获取本机地址
 		local_addresses = new ArrayList<InetAddress>(5);
 		InetAddress addr;
@@ -353,7 +419,7 @@ public class Node {
 	// <<<属性初始化
 
 	// >>>实现两种运行模式,Server、Client
-	public Node() {
+	public Node(String network) {
 		connected_nodes = new CopyOnWriteArrayList<NodeSocket>();
 		message_loop_group = new ThreadGroup("MESSAGE_LOOP");
 
@@ -368,9 +434,21 @@ public class Node {
 			e.printStackTrace();
 			System.exit(1);
 		}
+		
+		if (network == null) {
+			netID = emptyNetID;
+		} else {
+			MessageDigest digest = null;
+			try {
+				digest = MessageDigest.getInstance("MD5");
+			} catch (NoSuchAlgorithmException e) {
+				e.printStackTrace();
+			}
+			netID = digest.digest(network.getBytes());
+		}
 	}
-
 	
+
 	/**
 	 * 获取已连接节点数
 	 * @return
@@ -505,7 +583,7 @@ public class Node {
 	 */
 	public int broadcast(Message message) {
 		//worker_pool.execute(new MessageCallback(message, null, true));//消息给自己发送一份
-		return flood(packMessage(message, true, new Random().nextInt(Integer.MAX_VALUE)), null);
+		return flood(packMessage(message, true, new Random().nextInt(Integer.MAX_VALUE),  netID), null);
 	}
 
 	/**
@@ -516,7 +594,7 @@ public class Node {
 	 * @return
 	 */
 	public int requestNeighbors(Message message, NodeSocket exclude,int limit) {
-		return flood(packMessage(message, false, 0), exclude, limit);
+		return flood(packMessage(message, false, 0,  netID), exclude, limit);
 	}
 	
 	/**
@@ -527,6 +605,9 @@ public class Node {
 	 * @return
 	 */
 	int flood(byte[] _msg, NodeSocket exclude, int limit) {
+		if (_msg == null) {
+			return 0;
+		}
 		int nSuccess = 0;
 		for (NodeSocket sock : connected_nodes) {
 			if (exclude == null || !sock.equals(exclude)) {
@@ -545,6 +626,7 @@ public class Node {
 				}
 			}
 		}
+		logInfo("泛洪消息给" + nSuccess + "个节点");
 
 		return nSuccess;
 	}
@@ -636,7 +718,7 @@ public class Node {
 	 * @return
 	 */
 	public InetAddress getServerAddress() {
-		if (sock_serv.isBound()) {
+		if (sock_serv != null && sock_serv.isBound()) {
 			return sock_serv.getInetAddress();
 		}
 		return null;
@@ -648,7 +730,7 @@ public class Node {
 	 * @return
 	 */
 	public int getServerPort() {
-		if (sock_serv.isBound()) {
+		if (sock_serv != null && sock_serv.isBound()) {
 			return sock_serv.getLocalPort();
 		}
 		return 0;
@@ -768,7 +850,7 @@ public class Node {
 		logInfo(message.getClass() + "--->>>", sock);
 		try {
 			OutputStream rawOut = sock.getOutputStream();
-			rawOut.write(packMessage(message, false, 0));
+			rawOut.write(packMessage(message, false, 0,  netID));
 			rawOut.flush();
 			if (sock.isClient) {
 				last_active_time.replace(sock, getTimestamp());
@@ -782,7 +864,7 @@ public class Node {
 	
 	}
 
-	private byte[] packMessage(Message message, boolean isFlood, int serial) {
+	private byte[] packMessage(Message message, boolean isFlood, int serial, byte[] netID) {
 		ByteArrayOutputStream arr_out = new ByteArrayOutputStream();
 		DataOutputStream data_arr_out = new DataOutputStream(arr_out);
 		ByteArrayOutputStream arr_out_complete = new ByteArrayOutputStream();
@@ -790,19 +872,38 @@ public class Node {
 			message.output(data_arr_out);// 打包消息体
 			int msg_len = data_arr_out.size();// 取得消息长度
 			if (msg_len > 65535) {
-				System.err.println("Message type " + message.getType() + " too long");
+				System.err.println("Message type " + message.getCode() + " too long");
 				return null;
 			}
-			int msg_type = message.getType();// 消息类型
-
+			int msg_code = message.getCode();// 消息类型
+			int msg_type = 7;
+			if (message instanceof ConnectionRefuse ||
+				message instanceof ConnectivityDetectProxy ||
+				message instanceof HeartBeat ||
+				message instanceof NewNodesShare ||
+				message instanceof NodeDetection ||
+				message instanceof NodesExchange 
+					) {
+				msg_type = msg_code;
+			} 
+			
+			
 			// 重新组装消息
 			data_arr_out = new DataOutputStream(arr_out_complete);
-			data_arr_out.write(msg_type);
-			data_arr_out.writeBoolean(isFlood);
+			data_arr_out.write(msg_type | (isFlood ? 0x80:0));
+			if (msg_type == 7) {
+				if (Arrays.equals(netID, emptyNetID)) {
+					logInfo("打包失败,空网络");
+					return null;
+				}
+				data_arr_out.write(netID);
+				data_arr_out.writeShort(msg_code);
+			}
+			data_arr_out.writeShort(msg_len);
 			if (isFlood) {
 				data_arr_out.writeInt(serial);//32位序列号区分不同消息
 			}
-			data_arr_out.writeShort(msg_len);
+			
 			arr_out.writeTo(arr_out_complete);
 		} catch (IOException e) {
 
@@ -871,22 +972,11 @@ public class Node {
 
 			int msg_type = in.readUnsignedByte();
 			
-			//if flood
-			if (in.readBoolean()) {
+			if (msg_type != 1) {
 				return false;
 			}
-			
-			int msg_len = in.readUnsignedShort();
-
-			Message msg;
-			msg = Registry.newMessageInstance(msg_type);
-			buffer = new byte[msg_len];
-			in.readFully(buffer);
-			msg.input(new DataInputStream(new ByteArrayInputStream(buffer)), msg_len);
-			buffer = null;
 			logInfo(addr.getHostAddress() + "检测完成");
-			return msg instanceof NodeDetection;
-
+			return true;
 		} catch (Exception e) {
 			if (debug) {
 				e.printStackTrace();
