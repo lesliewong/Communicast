@@ -20,18 +20,14 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.Enumeration;
-import java.util.Iterator;
-import java.util.Map.Entry;
 import java.util.Random;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
-
 import collection.hashgold.BloomFilter;
 import collection.hashgold.LimitedRandomSet;
 import exception.hashgold.AlreadyConnected;
@@ -92,20 +88,14 @@ public class Node {
 	 */
 	private class HeartBeatEvent implements Runnable {
 		public void run() {
-			Iterator<Entry<NodeSocket, Integer>> it = last_active_time.entrySet().iterator();
 			int now = getTimestamp();
-			Entry<NodeSocket, Integer> entry;
-			while (it.hasNext()) {
-				entry = it.next();
-				// 心跳由客户端发起
-				if (entry.getValue() <= now - heart_beat_interval) {
-					// logInfo("发送心跳", entry.getKey());
-					sendTo(entry.getKey(), new HeartBeat());
-			
+			for (NodeSocket sock : connected_nodes) {
+				//连接15秒没有活动(收/发消息),客户端发送一个心跳进行试探,服务端延后2秒探测
+				if (sock.getActiveTime() <= now - heart_beat_interval - (sock.isClient ? 0:2)){
+					sendTo(sock, new HeartBeat());
 				}
 			}
 		}
-
 	}
 
 	/**
@@ -204,11 +194,8 @@ public class Node {
 							buffer = new byte[msg_len];
 							in.readFully(buffer);
 							
-							// 更新服务器响应时间
-							if (node_added && _sock.isClient) {
-								last_active_time.put(_sock, getTimestamp());
-							}
-							
+							// 更新连接活动时间
+							_sock.touch();
 							
 							if (is_flood) {
 								//过滤闭环的泛洪消息
@@ -284,13 +271,7 @@ public class Node {
 									}
 
 									if (node_added) {
-										
 										addConnected(_sock);
-										
-										// 初始化服务器响应时间
-										if ( _sock.isClient) {
-											last_active_time.put(_sock, getTimestamp());
-										}
 										logInfo("加入新节点", _sock);
 									}
 								}
@@ -335,7 +316,7 @@ public class Node {
 
 	private final static byte[] HANDSHAKE_FLAG;// 协议握手标识
 
-	public static final int heart_beat_interval = 15;// 心跳间隔秒,超过一个心跳间隔未收到对方消息则主动发出一个心跳,超过3个心跳间隔时间无响应将断开连接
+	public static final int heart_beat_interval = 15;// 心跳间隔,秒,超过一个心跳间隔连接未活动发出一个心跳
 
 	public static int public_nodes_list_size = 500; // 保存公共节点数量限制
 
@@ -349,7 +330,7 @@ public class Node {
 	
 	private final byte[] netID;//节点所属网络
 
-	private static int getTimestamp() {
+	static int getTimestamp() {
 		return (int) (System.currentTimeMillis() / 1000);
 	}
 
@@ -359,11 +340,7 @@ public class Node {
 	private final CopyOnWriteArrayList<NodeSocket> connected_nodes;// 连接节点
 
 	private final ThreadGroup message_loop_group;// 消息循环线程组
-
-	private ConcurrentHashMap<NodeSocket, Integer> last_active_time;// 心跳状态,socket
-																	// =>
-																	// 最后接收消息时间(秒)
-
+														
 	private ScheduledExecutorService heart_beater;// 心跳起搏器
 
 	private BloomFilter bloom_filter;// 布隆过滤器
@@ -446,6 +423,10 @@ public class Node {
 			}
 			netID = digest.digest(network.getBytes());
 		}
+		
+		logInfo("开始心跳");
+		heart_beater = Executors.newSingleThreadScheduledExecutor();
+		heart_beater.scheduleAtFixedRate(new HeartBeatEvent(), 0, 1, TimeUnit.SECONDS);
 	}
 	
 
@@ -582,7 +563,6 @@ public class Node {
 	 * @return 成功发送到多少节点
 	 */
 	public int broadcast(Message message) {
-		//worker_pool.execute(new MessageCallback(message, null, true));//消息给自己发送一份
 		return flood(packMessage(message, true, new Random().nextInt(Integer.MAX_VALUE),  netID), null);
 	}
 
@@ -615,9 +595,7 @@ public class Node {
 					OutputStream out = sock.getOutputStream();
 					out.write(_msg);
 					out.flush();
-					if (sock.isClient) {
-						last_active_time.replace(sock, getTimestamp());
-					}
+					sock.touch();
 					if (++nSuccess > limit && limit > 0) {
 						break;
 					}
@@ -663,13 +641,6 @@ public class Node {
 			throw new ConnectionFull("Max connection:" + max_connections);
 		}
 
-		// 开始心跳
-		if (last_active_time == null) {
-			last_active_time = new ConcurrentHashMap<NodeSocket, Integer>();
-			logInfo("开始心跳，" + heart_beat_interval + "秒每次");
-			heart_beater = Executors.newSingleThreadScheduledExecutor();
-			heart_beater.scheduleAtFixedRate(new HeartBeatEvent(), 0, 1, TimeUnit.SECONDS);
-		}
 		Socket _sock = new Socket();
 		_sock.connect(new InetSocketAddress(dest, port), connect_timeout);
 		NodeSocket sock = new NodeSocket(_sock, true);
@@ -702,7 +673,6 @@ public class Node {
 				}
 			}
 			sock.close();
-			last_active_time.remove(sock);
 		} catch (Exception e) {
 		}
 
@@ -852,9 +822,7 @@ public class Node {
 			OutputStream rawOut = sock.getOutputStream();
 			rawOut.write(packMessage(message, false, 0,  netID));
 			rawOut.flush();
-			if (sock.isClient) {
-				last_active_time.replace(sock, getTimestamp());
-			}
+			sock.touch();
 		} catch (IOException e) {
 			e.printStackTrace();
 			delConnected(sock);

@@ -11,6 +11,7 @@ public class NodeSocket implements AutoCloseable{
 	private final Socket _sock;
 	private final int _hash_code;
 	private final int _local_hash_code;
+	private int _last_active_time;
 	public final boolean isClient;
 	
 	NodeSocket(Socket sock, boolean client) throws SocketException {
@@ -57,6 +58,14 @@ public class NodeSocket implements AutoCloseable{
 	
 	public int getPort() {
 		return _sock.getPort();
+	}
+	
+	void touch() {
+		_last_active_time = Node.getTimestamp();
+	}
+	
+	int getActiveTime() {
+		return _last_active_time;
 	}
 	
 	public InetAddress getInetAddress() {
