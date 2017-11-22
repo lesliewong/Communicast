@@ -62,9 +62,10 @@ public final class Responser {
 	 * 通过当前节点广播消息
 	 * @param message
 	 * @return
+	 * @throws Exception 
 	 */
-	public int broadcast(Message message) {
-		return _node.broadcast(message);
+	public void broadcast(Message message, int min_nodes) throws Exception {
+		 _node.broadcast(message, min_nodes);
 	}
 	
 	

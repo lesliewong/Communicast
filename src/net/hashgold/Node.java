@@ -20,18 +20,19 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.Enumeration;
-import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Predicate;
 import collection.hashgold.BloomFilter;
 import collection.hashgold.LimitedRandomSet;
 import exception.hashgold.AlreadyConnected;
 import exception.hashgold.ConnectionFull;
+import exception.hashgold.NodesNotEnough;
 import exception.hashgold.UnrecognizedMessage;
 import msg.hashgold.ConnectionRefuse;
 import msg.hashgold.ConnectivityDetectProxy;
@@ -41,8 +42,100 @@ import msg.hashgold.NewNodesShare;
 import msg.hashgold.NodeDetection;
 import msg.hashgold.NodesExchange;
 import msg.hashgold.Registry;
+import util.hashgold.WorkProof;
+import util.hashgold.WorkProof.WorkResult;
 
 public class Node {
+	
+	/**
+	 * 工作量并发计算器
+	 * @author huangkaixuan
+	 */
+	private class ConcurrentWorkCalculator {
+		private ReentrantLock lock;
+		private byte[] source;
+		private final int difficulity;
+		private WorkProof[] workers;
+		
+		/**
+		 * @param data 原始数据
+		 * @param difficulity 计算难度
+		 */
+		private ConcurrentWorkCalculator(byte[] data, int difficulity) {
+			source = data;
+			this.difficulity  = difficulity;
+		}
+		
+		private void start() throws Exception {
+			lock = new ReentrantLock();
+			workers = new WorkProof[work_proof_thread_num];
+			byte[] data;
+			for(int i = 0; i < work_proof_thread_num; i++) {
+				if (work_proof_thread_num > 1) {
+					data = Arrays.copyOf(source, source.length + 1);
+					data[source.length] = (byte)i;
+				} else {
+					data = source;
+				}
+				workers[i] = new WorkProof(data, difficulity, "MD5", true);	
+				work_proof_generate_pool.execute(new WorkProofTask(this, i));
+			}		
+			
+		}
+		
+		private void terminate() {
+			for(WorkProof worker : workers) {
+				worker.quit();
+			}
+		}
+	}
+	
+	/**
+	 * 工作量计算任务
+	 * @author huangkaixuan
+	 */
+	private class WorkProofTask implements Runnable {
+		private final ConcurrentWorkCalculator batch;
+		private final WorkProof self_worker;
+		
+		/**
+		 * @param to_thread 线程索引
+		 * @param proof_workers
+		 */
+		private WorkProofTask(ConcurrentWorkCalculator batch, int index) {
+			this.batch = batch;
+			self_worker = batch.workers[index];
+		}
+		
+		@Override
+		public void run() {
+			try {
+				if (self_worker.startWork() &&  batch.lock.tryLock()) {
+					//计算成功并获得锁
+					batch.terminate();//结束其它线程计算
+					WorkResult result = self_worker.getResult();
+					
+					//泛洪消息,并附带工作量证明
+					byte[] toSend = Arrays.copyOf(result.source, result.source.length + 1 + result.nonce.length);
+					if (work_proof_thread_num == 1) {
+						toSend[result.source.length] = (byte)result.nonce.length;
+					} else {
+						//交换线程index和nonce_size字节位置
+						toSend[result.source.length] = toSend[result.source.length - 1];
+						toSend[result.source.length - 1] = (byte)(result.nonce.length + 1);
+					}
+					
+					System.arraycopy(result.nonce, 0, toSend, result.source.length+1, result.nonce.length);
+					logInfo("广播发送内容:" + Arrays.toString(toSend));
+					flood(toSend, null);
+				}
+			} catch (Exception e) {
+				e.printStackTrace();
+			}
+		}
+		
+	}
+	
 	/**
 	 * 消息回调
 	 * 
@@ -109,7 +202,7 @@ public class Node {
 			super(message_loop_group, new Runnable() {
 				public void run() {
 					try {
-						DataInputStream in = new DataInputStream(new BufferedInputStream(_sock.getInputStream(), 50));
+						DataInputStream in = new DataInputStream(new BufferedInputStream(_sock.getInputStream(),46));
 						if (!in.markSupported()) {
 							System.err.println("Message loop stream don't support mark");
 							return;
@@ -139,19 +232,21 @@ public class Node {
 						byte[] netID = new byte[16];//网络id
 						int msg_len;// 消息长度
 						int msg_code = 0;//消息代码
-						boolean is_flood;//是否泛洪
+						boolean is_broadcast;//是否广播
 						boolean node_added = false;//节点是否已经建立连接
 						int header_length;//消息头长度
 						byte[] header_buffer =  new byte[25];//消息头缓存
 						byte[] buffer_total = null;//完整消息缓存
+						byte[] nonce = null;
+						MessageDigest md5_digest = MessageDigest.getInstance("MD5");
 						
 						//进入消息循环
 						do {
 							header_length = 0;
-							in.mark(25);		
-							//消息类型,是否泛洪		
+							in.mark(21);		
+							//消息类型,是否广播
 							msg_type = in.readUnsignedByte(); 
-							is_flood = msg_type >= 0x80;//是否泛洪
+							is_broadcast = msg_type >= 0x80;//是否广播
 							msg_type &= ~0x80;
 							header_length++;
 							
@@ -183,9 +278,8 @@ public class Node {
 							msg_len = in.readUnsignedShort(); //消息长度
 							header_length += 2;
 							
-							if (is_flood) {
-								in.readInt();//消息序列号
-								header_length += 4;
+							//读取消息头
+							if (is_broadcast) {
 								in.reset();
 								in.read(header_buffer, 0, header_length);
 							}
@@ -194,18 +288,45 @@ public class Node {
 							buffer = new byte[msg_len];
 							in.readFully(buffer);
 							
+							if (is_broadcast) {
+							//读取Nonce
+								int nonce_size = in.readUnsignedByte();
+								if (nonce_size > 16) {
+									break;
+								}
+								nonce = new byte[nonce_size];
+								in.read(nonce);
+							}
 							// 更新连接活动时间
 							_sock.touch();
 							
-							if (is_flood) {
-								//过滤闭环的泛洪消息
-								buffer_total = new byte[header_length + buffer.length];
+							if (is_broadcast) {
+								buffer_total = new byte[header_length + buffer.length +nonce.length];
 								System.arraycopy(header_buffer, 0, buffer_total, 0, header_length);
 								System.arraycopy(buffer, 0, buffer_total, header_length, msg_len);
+								//buffer_total[header_length + buffer.length] = (byte)nonce.length;
+								System.arraycopy(nonce, 0, buffer_total, header_length + buffer.length, nonce.length);
+								
+								//检查工作量
+								int difficulity = WorkProof.getDifficulity(md5_digest.digest(buffer_total));
+								if (difficulity < broadcast_difficulity) {
+									logInfo("广播工作量不足" + broadcast_difficulity );
+									continue;
+								}
+								
+								//重构整个消息,插入nonce size
+								buffer_total = new byte[buffer_total.length + 1];
+								System.arraycopy(header_buffer, 0, buffer_total, 0, header_length);
+								System.arraycopy(buffer, 0, buffer_total, header_length, msg_len);
+								buffer_total[header_length + buffer.length] = (byte)nonce.length;
+								System.arraycopy(nonce, 0, buffer_total, header_length + buffer.length + 1, nonce.length);
+								//过滤循环消息
 								if (!bloom_filter.add(buffer_total)) {
-									logInfo("阻止闭环泛洪消息",_sock);
+									//logInfo("阻止闭环泛洪消息",_sock);
 									continue;
 								}	
+								
+								logInfo("收到广播,难度:"+difficulity);
 							}
 							
 							Message msg = null;
@@ -233,10 +354,10 @@ public class Node {
 								case 7:
 									if (!MessageDigest.isEqual(netID, Node.this.netID)) {
 										//非本网络消息直接转发
-										if (is_flood) {
+										if (is_broadcast) {
 											flood(buffer_total, _sock);
+											buffer_total = null;
 										}
-										buffer_total = null;
 										continue;
 									}
 									msg = Registry.newMessageInstance(msg_code);
@@ -278,7 +399,7 @@ public class Node {
 
 								// 只有接受的连接或者探测和拒绝消息被处理
 								if (node_added || msg instanceof NodeDetection || msg instanceof ConnectionRefuse) {
-									worker_pool.execute(new MessageCallback(msg, _sock, is_flood ? Arrays.copyOf(buffer_total, buffer_total.length):null));
+									worker_pool.execute(new MessageCallback(msg, _sock, is_broadcast ? buffer_total:null));
 								}
 								buffer_total = null;
 
@@ -345,11 +466,17 @@ public class Node {
 
 	private BloomFilter bloom_filter;// 布隆过滤器
 
-	private final ExecutorService worker_pool;// 消息处理线程池
+	private static final ExecutorService worker_pool;// 消息处理线程池
 
+	private static ExecutorService work_proof_generate_pool;//工作量证明计算池
+	
 	public NodeConnectedEvent onConnect; // 连接订阅者
 	
 	public PublicNodesFound onNodesFound;//新节点发现
+	
+	public static int work_proof_thread_num = 1;//工作量证明线程数
+	
+	public static int broadcast_difficulity = 21; //广播难度,当前算力下,难度为21时节点每秒大概可以广播8条消息,增加1则难度翻倍
 	
 	private Thread listen_thread;//监听线程
 
@@ -370,7 +497,10 @@ public class Node {
 
 		// 布隆过滤器大小,默认1MB
 		bloom_filter_size = 1024 * 1024 * 1;
-				
+		
+		// 初始化工作线程池
+		worker_pool = Executors.newCachedThreadPool();
+		
 		// 获取本机地址
 		local_addresses = new ArrayList<InetAddress>(5);
 		InetAddress addr;
@@ -400,8 +530,7 @@ public class Node {
 		connected_nodes = new CopyOnWriteArrayList<NodeSocket>();
 		message_loop_group = new ThreadGroup("MESSAGE_LOOP");
 
-		// 初始化工作线程池
-		worker_pool = Executors.newCachedThreadPool();
+		
 
 		// 公共节点列表
 		try {
@@ -553,6 +682,7 @@ public class Node {
 		return local_addresses.contains(addr);
 	}
 
+	
 	/**
 	 * 广播消息
 	 * 
@@ -560,12 +690,38 @@ public class Node {
 	 *            消息类型
 	 * @param buffer
 	 *            消息内容
-	 * @return 成功发送到多少节点
+	 * @throws Exception 
 	 */
-	public int broadcast(Message message) {
-		return flood(packMessage(message, true, new Random().nextInt(Integer.MAX_VALUE),  netID), null);
+	public void broadcast(Message message, int min_connected) throws Exception {
+		int have = getConnectedNum();
+		if (have < min_connected) {
+			throw new NodesNotEnough(min_connected, have);
+		}
+		
+		//实例化工作量池
+		if (work_proof_generate_pool == null) {
+			synchronized(getClass()) {
+				if (work_proof_generate_pool == null) {
+					work_proof_generate_pool = Executors.newFixedThreadPool(work_proof_thread_num);
+				}
+			}
+		}
+		
+		//并行计算工作量进行广播,20个零大约速度是1秒5条消息
+		new ConcurrentWorkCalculator(packMessage(message,true, netID),broadcast_difficulity).start();
+	}
+	
+	
+	/**
+	 * 广播消息,至少连接一个节点
+	 * @param message
+	 * @throws Exception 
+	 */
+	public void broadcast(Message message) throws Exception {
+			broadcast(message, 1);
 	}
 
+	
 	/**
 	 * 随机向邻近节点发送请求
 	 * @param message 消息
@@ -574,7 +730,7 @@ public class Node {
 	 * @return
 	 */
 	public int requestNeighbors(Message message, NodeSocket exclude,int limit) {
-		return flood(packMessage(message, false, 0,  netID), exclude, limit);
+		return flood(packMessage(message, false,   netID), exclude, limit);
 	}
 	
 	/**
@@ -820,7 +976,7 @@ public class Node {
 		logInfo(message.getClass() + "--->>>", sock);
 		try {
 			OutputStream rawOut = sock.getOutputStream();
-			rawOut.write(packMessage(message, false, 0,  netID));
+			rawOut.write(packMessage(message, false, netID));
 			rawOut.flush();
 			sock.touch();
 		} catch (IOException e) {
@@ -832,7 +988,7 @@ public class Node {
 	
 	}
 
-	private byte[] packMessage(Message message, boolean isFlood, int serial, byte[] netID) {
+	private byte[] packMessage(Message message, boolean isBroadcast, byte[] netID) {
 		ByteArrayOutputStream arr_out = new ByteArrayOutputStream();
 		DataOutputStream data_arr_out = new DataOutputStream(arr_out);
 		ByteArrayOutputStream arr_out_complete = new ByteArrayOutputStream();
@@ -858,7 +1014,7 @@ public class Node {
 			
 			// 重新组装消息
 			data_arr_out = new DataOutputStream(arr_out_complete);
-			data_arr_out.write(msg_type | (isFlood ? 0x80:0));
+			data_arr_out.write(msg_type | (isBroadcast ? 0x80:0));
 			if (msg_type == 7) {
 				if (Arrays.equals(netID, emptyNetID)) {
 					logInfo("打包失败,空网络");
@@ -868,9 +1024,9 @@ public class Node {
 				data_arr_out.writeShort(msg_code);
 			}
 			data_arr_out.writeShort(msg_len);
-			if (isFlood) {
-				data_arr_out.writeInt(serial);//32位序列号区分不同消息
-			}
+//			if (isBroadcast) {
+//				data_arr_out.writeInt(serial);//32位序列号区分不同消息
+//			}
 			
 			arr_out.writeTo(arr_out_complete);
 		} catch (IOException e) {
@@ -899,6 +1055,10 @@ public class Node {
 		}
 		
 		worker_pool.shutdown();// 结束工作线程池
+		
+		if (work_proof_generate_pool != null) {
+			work_proof_generate_pool.shutdownNow();
+		}
 		
 		// 断开所有节点
 		for (NodeSocket sock : connected_nodes) {
