@@ -127,7 +127,7 @@ public class Node {
 					
 					System.arraycopy(result.nonce, 0, toSend, result.source.length+1, result.nonce.length);
 					logInfo("广播发送内容:" + Arrays.toString(toSend));
-					flood(toSend, null);
+					floodAsync(toSend, null);
 				}
 			} catch (Exception e) {
 				e.printStackTrace();
@@ -355,7 +355,7 @@ public class Node {
 									if (!MessageDigest.isEqual(netID, Node.this.netID)) {
 										//非本网络消息直接转发
 										if (is_broadcast) {
-											flood(buffer_total, _sock);
+											floodAsync(buffer_total, _sock);
 											buffer_total = null;
 										}
 										continue;
@@ -775,6 +775,19 @@ public class Node {
 		return flood(_msg, exclude, 0);
 	}
 	
+	
+	/**
+	 * 异步泛洪
+	 * @param _msg
+	 * @param exclude
+	 */
+	private void floodAsync(byte[] _msg, NodeSocket exclude) {
+		worker_pool.execute(new Runnable() {
+			@Override
+			public void run() {
+				flood(_msg, exclude);
+			}});
+	}
 	
 
 	// <<<客户端模式
