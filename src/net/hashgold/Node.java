@@ -474,7 +474,7 @@ public class Node {
 	
 	public PublicNodesFound onNodesFound;//新节点发现
 	
-	public static int work_proof_thread_num = 1;//工作量证明线程数
+	public static int work_proof_thread_num = 4;//工作量证明线程数
 	
 	public static int broadcast_difficulity = 21; //广播难度,当前算力下,难度为21时节点每秒大概可以广播8条消息,增加1则难度翻倍
 	
