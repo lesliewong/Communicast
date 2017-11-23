@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.Enumeration;
+import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
@@ -202,7 +203,7 @@ public class Node {
 			super(message_loop_group, new Runnable() {
 				public void run() {
 					try {
-						DataInputStream in = new DataInputStream(new BufferedInputStream(_sock.getInputStream(),46));
+						DataInputStream in = new DataInputStream(new BufferedInputStream(_sock.getInputStream(),50));
 						if (!in.markSupported()) {
 							System.err.println("Message loop stream don't support mark");
 							return;
@@ -243,7 +244,7 @@ public class Node {
 						//进入消息循环
 						do {
 							header_length = 0;
-							in.mark(21);		
+							in.mark(25);		
 							//消息类型,是否广播
 							msg_type = in.readUnsignedByte(); 
 							is_broadcast = msg_type >= 0x80;//是否广播
@@ -280,6 +281,8 @@ public class Node {
 							
 							//读取消息头
 							if (is_broadcast) {
+								in.readInt();
+								header_length += 4;
 								in.reset();
 								in.read(header_buffer, 0, header_length);
 							}
@@ -459,6 +462,8 @@ public class Node {
 	private ServerSocket sock_serv;// 服务器类单例
 
 	private final CopyOnWriteArrayList<NodeSocket> connected_nodes;// 连接节点
+	
+	private final Random broadcast_random;//广播随机数发生器
 
 	private final ThreadGroup message_loop_group;// 消息循环线程组
 														
@@ -529,7 +534,7 @@ public class Node {
 	public Node(String network) {
 		connected_nodes = new CopyOnWriteArrayList<NodeSocket>();
 		message_loop_group = new ThreadGroup("MESSAGE_LOOP");
-
+		
 		
 
 		// 公共节点列表
@@ -556,6 +561,7 @@ public class Node {
 		logInfo("开始心跳");
 		heart_beater = Executors.newSingleThreadScheduledExecutor();
 		heart_beater.scheduleAtFixedRate(new HeartBeatEvent(), 0, 1, TimeUnit.SECONDS);
+		broadcast_random = new Random();
 	}
 	
 
@@ -1037,9 +1043,9 @@ public class Node {
 				data_arr_out.writeShort(msg_code);
 			}
 			data_arr_out.writeShort(msg_len);
-//			if (isBroadcast) {
-//				data_arr_out.writeInt(serial);//32位序列号区分不同消息
-//			}
+			if (isBroadcast) {
+				data_arr_out.writeInt(broadcast_random.nextInt(Integer.MAX_VALUE));//32位序列号区分不同消息
+			}
 			
 			arr_out.writeTo(arr_out_complete);
 		} catch (IOException e) {
