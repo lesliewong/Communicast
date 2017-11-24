@@ -2,6 +2,7 @@ package net.hashgold;
 
 import java.net.InetAddress;
 
+import exception.hashgold.HugeMessageException;
 import msg.hashgold.Message;
 
 /**
@@ -24,8 +25,9 @@ public final class Responser {
 	 * »Ø¸´ÏûÏ¢
 	 * @param message
 	 * @return
+	 * @throws HugeMessageException 
 	 */
-	public boolean reply(Message message) {
+	public boolean reply(Message message) throws HugeMessageException {
 		if (_sock == null) {
 			return false;
 		}

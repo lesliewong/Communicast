@@ -9,6 +9,7 @@ import java.util.HashSet;
 import java.util.Set;
 
 import collection.hashgold.SocketAddressPacker;
+import exception.hashgold.HugeMessageException;
 import net.hashgold.Node;
 import net.hashgold.Responser;
 
@@ -51,7 +52,10 @@ public class ConnectivityDetectProxy implements Message {
 			//请求检测
 			//System.out.print("收到节点检测请求");
 			this.status = local.detect(addr, port) ? RequestStatus.Success:RequestStatus.Fail;
-			respon.reply(this);
+			try {
+				respon.reply(this);
+			} catch (HugeMessageException e) {
+			}
 			break;
 		case Fail:
 			//System.out.print("收到节点检测失败响应");

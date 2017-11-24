@@ -8,6 +8,7 @@ import java.util.HashSet;
 import java.util.Set;
 
 import collection.hashgold.SocketAddressPacker;
+import exception.hashgold.HugeMessageException;
 import net.hashgold.Node;
 import net.hashgold.Responser;
 
@@ -62,7 +63,10 @@ public class NodesExchange implements Message {
 			if (!respon.isClient()) {
 				//服务器转发客户端监听地址给邻近一个节点检测连通性
 				if (listen_port > 0 && Node.isInternetAddress(respon.getAddress())) {
-					localNode.requestNeighbors(new ConnectivityDetectProxy(respon.getAddress(), listen_port),respon.getSock(), 1);
+					try {
+						localNode.requestNeighbors(new ConnectivityDetectProxy(respon.getAddress(), listen_port),respon.getSock(), 1);
+					} catch (HugeMessageException e) {
+					}
 				}
 			}
 		}

@@ -20,6 +20,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.Enumeration;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -33,6 +35,7 @@ import collection.hashgold.BloomFilter;
 import collection.hashgold.LimitedRandomSet;
 import exception.hashgold.AlreadyConnected;
 import exception.hashgold.ConnectionFull;
+import exception.hashgold.HugeMessageException;
 import exception.hashgold.NodesNotEnough;
 import exception.hashgold.UnrecognizedMessage;
 import msg.hashgold.ConnectionRefuse;
@@ -186,7 +189,10 @@ public class Node {
 			for (NodeSocket sock : connected_nodes) {
 				//连接15秒没有活动(收/发消息),客户端发送一个心跳进行试探,服务端延后2秒探测
 				if (sock.getActiveTime() <= now - heart_beat_interval - (sock.isClient ? 0:2)){
-					sendTo(sock, new HeartBeat());
+					try {
+						sendTo(sock, new HeartBeat());
+					} catch (HugeMessageException e) {
+					}
 				}
 			}
 		}
@@ -449,6 +455,8 @@ public class Node {
 	public int max_connections = 50;// 最大连接数量;
 
 	public boolean debug = false;// 调试日志
+	
+	public final int MAX_MESSAGE_LENGTH = 65535;
 
 	private static final int bloom_filter_size;// 布隆过滤器空间
 	
@@ -661,7 +669,23 @@ public class Node {
 			if (onNodesFound != null) {
 				onNodesFound.trigger(newPublicAddresses);
 			}
-			requestNeighbors(new NewNodesShare(newPublicAddresses), from, 0);
+			try {
+				requestNeighbors(new NewNodesShare(newPublicAddresses), from, 0);
+			} catch (HugeMessageException e) {
+				// 地址列表过长拆分发送
+				int fragment_size =4064;
+				List<InetSocketAddress> addressesList = new ArrayList<InetSocketAddress>(newPublicAddresses);
+				for(int i = 0; i < addressesList.size(); i+=fragment_size) {
+					List<InetSocketAddress> subList = addressesList.subList(i, Math.min(addressesList.size() - 1,i + fragment_size - 1));
+					if (subList.size() > 0) {
+						try {
+							requestNeighbors(new NewNodesShare(new HashSet<InetSocketAddress>(subList)), from, 0);
+						} catch (HugeMessageException e1) {
+						}
+					}
+				}
+				
+			}
 		}
 	}
 
@@ -734,8 +758,9 @@ public class Node {
 	 * @param exclude 剔除的邻居
 	 * @param limit 请求邻居数量
 	 * @return
+	 * @throws HugeMessageException 
 	 */
-	public int requestNeighbors(Message message, NodeSocket exclude,int limit) {
+	public int requestNeighbors(Message message, NodeSocket exclude,int limit) throws HugeMessageException {
 		return flood(packMessage(message, false,   netID), exclude, limit);
 	}
 	
@@ -989,9 +1014,10 @@ public class Node {
 	 * @param isForward
 	 *            是否转发
 	 * @return 失败false
+	 * @throws HugeMessageException 
 	 * @throws MessageTooLong
 	 */
-	boolean sendTo(NodeSocket sock, Message message) {
+	boolean sendTo(NodeSocket sock, Message message) throws HugeMessageException {
 		logInfo(message.getClass() + "--->>>", sock);
 		try {
 			OutputStream rawOut = sock.getOutputStream();
@@ -1007,16 +1033,15 @@ public class Node {
 	
 	}
 
-	private byte[] packMessage(Message message, boolean isBroadcast, byte[] netID) {
+	private byte[] packMessage(Message message, boolean isBroadcast, byte[] netID) throws HugeMessageException {
 		ByteArrayOutputStream arr_out = new ByteArrayOutputStream();
 		DataOutputStream data_arr_out = new DataOutputStream(arr_out);
 		ByteArrayOutputStream arr_out_complete = new ByteArrayOutputStream();
 		try {
 			message.output(data_arr_out);// 打包消息体
 			int msg_len = data_arr_out.size();// 取得消息长度
-			if (msg_len > 65535) {
-				System.err.println("Message type " + message.getCode() + " too long");
-				return null;
+			if (msg_len > MAX_MESSAGE_LENGTH) {
+				throw new HugeMessageException(MAX_MESSAGE_LENGTH);
 			}
 			int msg_code = message.getCode();// 消息类型
 			int msg_type = 7;

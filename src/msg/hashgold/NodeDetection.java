@@ -4,6 +4,7 @@ import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 
+import exception.hashgold.HugeMessageException;
 import net.hashgold.Responser;
 
 /**
@@ -30,7 +31,10 @@ public class NodeDetection implements Message {
 	@Override
 	public void onReceive(Responser respon) {
 		if (! respon.isClient()) {//服务端发出探测响应
-			respon.reply(this);
+			try {
+				respon.reply(this);
+			} catch (HugeMessageException e) {
+			}
 		}	
 	}
 
