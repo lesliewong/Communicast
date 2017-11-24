@@ -8,5 +8,5 @@ import java.net.InetAddress;
  *
  */
 public interface NodeDisconnectEvent {
-	public void trigger(InetAddress remote, int port, Node node);
+	public void trigger(InetAddress remote, int port, Node self);
 }

@@ -1,5 +1,5 @@
 package net.hashgold;
 
 public interface ListenSuccessEvent {
-	public boolean trigger(Node node);
+	public boolean trigger(Node self);
 }

@@ -60,14 +60,16 @@ public class Node {
 		private byte[] source;
 		private final int difficulity;
 		private WorkProof[] workers;
+		private final Message msg;
 		
 		/**
 		 * @param data 原始数据
 		 * @param difficulity 计算难度
 		 */
-		private ConcurrentWorkCalculator(byte[] data, int difficulity) {
+		private ConcurrentWorkCalculator(Message message, byte[] data, int difficulity) {
 			source = data;
 			this.difficulity  = difficulity;
+			msg = message;
 		}
 		
 		private void start() throws Exception {
@@ -131,7 +133,7 @@ public class Node {
 					
 					System.arraycopy(result.nonce, 0, toSend, result.source.length+1, result.nonce.length);
 					logInfo("广播发送内容:" + Arrays.toString(toSend));
-					floodAsync(toSend, null);
+					floodAsync(toSend, null, batch.msg);
 				}
 			} catch (Exception e) {
 				e.printStackTrace();
@@ -364,7 +366,7 @@ public class Node {
 									if (!MessageDigest.isEqual(netID, Node.this.netID)) {
 										//非本网络消息直接转发
 										if (is_broadcast) {
-											floodAsync(buffer_total, _sock);
+											floodAsync(buffer_total, _sock, null);
 											buffer_total = null;
 										}
 										continue;
@@ -484,6 +486,12 @@ public class Node {
 	private static ExecutorService work_proof_generate_pool;//工作量证明计算池
 	
 	public NodeConnectedEvent onConnect; // 连接订阅者
+	
+	public ConnectRefusedEvent onConnectRefuse;//连接拒绝监听
+	
+	public ListenSuccessEvent onListenSuccess;// 监听订阅
+	
+	public PostBroadcastEvent afterBroadcast;//广播后事件
 	
 	public PublicNodesFound onNodesFound;//新节点发现
 	
@@ -667,7 +675,7 @@ public class Node {
 		if (newPublicAddresses.size() > 0) {
 			logInfo("转发节点..", from);
 			if (onNodesFound != null) {
-				onNodesFound.trigger(newPublicAddresses);
+				onNodesFound.trigger(newPublicAddresses, this);
 			}
 			try {
 				requestNeighbors(new NewNodesShare(newPublicAddresses), from, 0);
@@ -738,7 +746,7 @@ public class Node {
 		}
 		
 		//并行计算工作量进行广播,20个零大约速度是1秒5条消息
-		new ConcurrentWorkCalculator(packMessage(message,true, netID),broadcast_difficulity).start();
+		new ConcurrentWorkCalculator(message, packMessage(message,true, netID),broadcast_difficulity).start();
 	}
 	
 	
@@ -812,11 +820,14 @@ public class Node {
 	 * @param _msg
 	 * @param exclude
 	 */
-	private void floodAsync(byte[] _msg, NodeSocket exclude) {
+	private void floodAsync(byte[] _msg, NodeSocket exclude, Message source) {
 		worker_pool.execute(new Runnable() {
 			@Override
 			public void run() {
-				flood(_msg, exclude);
+				int sent_to = flood(_msg, exclude);
+				if  (source != null && afterBroadcast != null) {
+					afterBroadcast.trigger(source, sent_to, Node.this);
+				}
 			}});
 	}
 	
@@ -913,13 +924,10 @@ public class Node {
 	 * @throws DuplicateBinding
 	 * @throws IOException
 	 */
-	public void listen(ListenSuccessEvent onSuccess) throws UnknownHostException, IOException {
-		listen(0, 50, InetAddress.getByName("0.0.0.0"), onSuccess);
+	public void listen() throws UnknownHostException, IOException {
+		listen(0, 50, InetAddress.getByName("0.0.0.0"));
 	}
 	
-	public void listen() throws UnknownHostException, IOException {
-		listen(null);
-	}
 
 	// <<<公共接口
 
@@ -932,8 +940,8 @@ public class Node {
 	 * @throws DuplicateBinding
 	 * @throws UnknownHostException
 	 */
-	public void listen(int port, ListenSuccessEvent onSuccess) throws UnknownHostException, IOException {
-		listen(port, 50, InetAddress.getByName("0.0.0.0"), onSuccess);
+	public void listen(int port) throws UnknownHostException, IOException {
+		listen(port, 50, InetAddress.getByName("0.0.0.0"));
 	}
 
 	// >>>服务器模式
@@ -946,7 +954,7 @@ public class Node {
 	 * @throws DuplicateBinding
 	 * @throws IOException
 	 */
-	public void listen(int port, int backlog, InetAddress bindAddr, ListenSuccessEvent onSuccess) throws IOException {
+	public void listen(int port, int backlog, InetAddress bindAddr) throws IOException {
 		sock_serv = new ServerSocket(port, backlog, bindAddr);
 		// >>>开始监听连接
 
@@ -971,8 +979,8 @@ public class Node {
 		listen_thread.start();
 		
 		try {
-			if (onSuccess != null) {
-				if (onSuccess.trigger(this)) {
+			if (onListenSuccess != null) {
+				if (onListenSuccess.trigger(this)) {
 					listen_thread.join();
 				}
 			} else {

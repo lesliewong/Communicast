@@ -4,6 +4,7 @@ import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 
+import net.hashgold.ConnectRefusedEvent;
 import net.hashgold.Responser;
 
 /**
@@ -31,7 +32,12 @@ public class ConnectionRefuse implements Message {
 	@Override
 	public void onReceive(Responser respon) {
 		nodes_return.onReceive(respon);
-		System.err.println(respon.getAddress().getHostAddress() + " connection rejected:"+ this);
+		respon.close();
+		ConnectRefusedEvent event = respon.getLocalNode().onConnectRefuse;
+		if (event != null) {
+			event.trigger(respon.getAddress(), respon.getPort(), respon.getLocalNode());
+		}
+		
 	}
 
 	@Override

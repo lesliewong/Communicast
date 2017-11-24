@@ -2,11 +2,8 @@ package net.hashgold;
 
 import java.net.InetAddress;
 
-/**
- * 节点连接事件
- * @author huangkaixuan
- *
- */
-public interface NodeConnectedEvent {
+import msg.hashgold.Message;
+
+public interface ConnectRefusedEvent {
 	public void trigger(InetAddress remote, int port, Node self);
 }
