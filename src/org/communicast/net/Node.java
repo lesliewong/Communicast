@@ -455,7 +455,7 @@ public class Node {
 
 	public static int connect_timeout = 1500;// 连接超时,毫秒
 
-	public int max_connections = 50;// 最大连接数量;
+	public int max_connections = 255;// 最大连接数量;
 
 	public boolean debug = false;// 调试日志
 	
