@@ -285,8 +285,8 @@ public class Node {
 								header_length += 16 + 2;
 							}
 							
-							msg_len = in.readUnsignedShort(); //消息长度
-							header_length += 2;
+							msg_len = in.readInt(); //消息长度
+							header_length += 4;
 							
 							//读取消息头
 							if (is_broadcast) {
@@ -459,7 +459,7 @@ public class Node {
 
 	public boolean debug = false;// 调试日志
 	
-	public final int MAX_MESSAGE_LENGTH = 65535;
+	public final int MAX_MESSAGE_LENGTH = Integer.MAX_VALUE;
 
 	private static final int bloom_filter_size;// 布隆过滤器空间
 	
@@ -1076,7 +1076,7 @@ public class Node {
 				data_arr_out.write(netID);
 				data_arr_out.writeShort(msg_code);
 			}
-			data_arr_out.writeShort(msg_len);
+			data_arr_out.writeInt(msg_len);
 			if (isBroadcast) {
 				data_arr_out.writeInt(broadcast_random.nextInt(Integer.MAX_VALUE));//32位序列号区分不同消息
 			}
@@ -1147,7 +1147,7 @@ public class Node {
 			// 验证协议头
 			byte[] buffer = new byte[HANDSHAKE_FLAG.length];
 			in.readFully(buffer);
-			if (!MessageDigest.isEqual(buffer, HANDSHAKE_FLAG)) {
+			if (!Arrays.equals(buffer, HANDSHAKE_FLAG)) {
 				return false;
 			}
 
