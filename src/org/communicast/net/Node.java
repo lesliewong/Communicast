@@ -212,7 +212,7 @@ public class Node {
 			super(message_loop_group, new Runnable() {
 				public void run() {
 					try {
-						DataInputStream in = new DataInputStream(new BufferedInputStream(_sock.getInputStream(),50));
+						DataInputStream in = new DataInputStream(new BufferedInputStream(_sock.getInputStream(),52));
 						if (!in.markSupported()) {
 							System.err.println("Message loop stream don't support mark");
 							return;
@@ -253,7 +253,7 @@ public class Node {
 						//进入消息循环
 						do {
 							header_length = 0;
-							in.mark(25);		
+							in.mark(27);		
 							//消息类型,是否广播
 							msg_type = in.readUnsignedByte(); 
 							is_broadcast = msg_type >= 0x80;//是否广播
